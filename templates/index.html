@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoAuction — Sealed Bid Demo</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ===== HEADER ===== -->
+  <header>
+    <div class="header-inner">
+      <div class="header-brand">
+        <span class="brand-icon">🔐</span>
+        <h1>CryptoAuction</h1>
+        <span class="brand-sub">Sealed-Bid Cryptographic Protocol</span>
+      </div>
+      <div id="phase-indicator" class="phase-indicator" style="display:none">
+        <div class="phase-pill" data-phase="commit">
+          <span class="pill-dot"></span>COMMIT
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase-pill" data-phase="prove">
+          <span class="pill-dot"></span>ZK PROVE
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase-pill" data-phase="reveal">
+          <span class="pill-dot"></span>REVEAL
+        </div>
+        <div class="phase-arrow">→</div>
+        <div class="phase-pill" data-phase="finished">
+          <span class="pill-dot"></span>FINISHED
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== SETUP PANEL ===== -->
+  <section id="setup-panel" class="setup-panel">
+    <div class="setup-card">
+      <h2>Configure Auction</h2>
+      <p class="setup-desc">
+        Set up a sealed-bid auction demonstrating a 3-phase cryptographic protocol:
+        <strong>Commit → ZK Prove → Reveal</strong>.
+      </p>
+
+      <div class="form-grid">
+        <label for="item-name">Item Name</label>
+        <input id="item-name" type="text" placeholder="e.g. Vintage Watch" value="Rare NFT #42" />
+
+        <label for="min-bid">Min Bid ($)</label>
+        <input id="min-bid" type="number" value="100" min="1" />
+
+        <label for="max-bid">Max Bid ($)</label>
+        <input id="max-bid" type="number" value="10000" min="2" />
+      </div>
+
+      <div class="bidders-setup">
+        <label>Bidders</label>
+        <div id="bidder-inputs">
+          <div class="bidder-input-row">
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Alice" />
+            <button class="btn-remove-bidder" onclick="removeBidderInput(this)">✕</button>
+          </div>
+          <div class="bidder-input-row">
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Bob" />
+            <button class="btn-remove-bidder" onclick="removeBidderInput(this)">✕</button>
+          </div>
+          <div class="bidder-input-row">
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Carol" />
+            <button class="btn-remove-bidder" onclick="removeBidderInput(this)">✕</button>
+          </div>
+        </div>
+        <button id="btn-add-bidder" onclick="addBidderInput()">+ Add Bidder</button>
+      </div>
+
+      <div class="setup-buttons">
+        <button id="btn-create" onclick="createAuction()">Start Auction →</button>
+        <button id="btn-demo" onclick="startDemo()">▶ Watch Demo</button>
+      </div>
+      <div id="setup-error" class="error-msg" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- ===== DEMO BANNER ===== -->
+  <div id="demo-banner" style="display:none">
+    <span id="demo-status-text">Demo running…</span>
+    <button onclick="stopDemo()">■ Stop Demo</button>
+  </div>
+
+  <!-- ===== MAIN AUCTION VIEW ===== -->
+  <main id="auction-view" style="display:none">
+
+    <!-- Left: Bidders -->
+    <section id="bidders-panel">
+      <div class="panel-header">
+        <h2>Bidders</h2>
+        <span id="auction-item-label" class="item-label"></span>
+      </div>
+      <div id="bidder-cards"></div>
+    </section>
+
+    <!-- Center: Protocol Log -->
+    <section id="log-panel">
+      <div class="panel-header">
+        <h2>Protocol Log</h2>
+        <button class="btn-clear-log" onclick="clearLog()">Clear</button>
+      </div>
+
+      <div class="log-section">
+        <div class="log-section-title public-title">
+          <span class="log-dot public-dot"></span>Public — visible to all
+        </div>
+        <div id="public-log"></div>
+      </div>
+
+      <div class="log-section">
+        <div class="log-section-title private-title">
+          <span class="log-dot private-dot"></span>Private — bidder only
+        </div>
+        <div id="private-log"></div>
+      </div>
+    </section>
+
+    <!-- Right: Actions -->
+    <section id="actions-panel">
+      <div class="panel-header">
+        <h2>Actions</h2>
+        <button class="btn-reset" onclick="resetAuction()">Reset</button>
+      </div>
+      <div id="actions-content"></div>
+    </section>
+
+  </main>
+
+  <!-- ===== WINNER MODAL ===== -->
+  <div id="winner-overlay" style="display:none">
+    <div id="winner-modal">
+      <div class="winner-trophy">🏆</div>
+      <h2>Auction Complete!</h2>
+      <div id="winner-name" class="winner-name"></div>
+      <div id="winner-bid" class="winner-bid"></div>
+      <p class="winner-desc">
+        Bid verified against cryptographic commitment.<br/>
+        Result is publicly auditable.
+      </p>
+      <button onclick="closeWinnerModal()">Close</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
