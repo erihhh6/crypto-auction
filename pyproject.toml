@@ -36,8 +36,8 @@ omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Floor, not a target: the lowest current total (64% on Python 3.14+, where
+# Floor, not a target: the lowest current total (92.2% on Python 3.14+, where
 # coverage counts statements differently) minus headroom. Raise it as tests
 # are added.
-fail_under = 60
+fail_under = 90
 exclude_also = ['if __name__ == "__main__":']
