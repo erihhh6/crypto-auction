@@ -1,4 +1,4 @@
-"""Tests for crypto/commitment.py"""
+"""Tests for crypto_auction.commitment"""
 
 import unittest
 

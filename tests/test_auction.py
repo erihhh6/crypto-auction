@@ -1,7 +1,6 @@
-"""Tests for crypto/auction.py — state machine and auction logic."""
+"""Tests for crypto_auction.auction — state machine and auction logic."""
 
 import unittest
-from dataclasses import asdict
 
 from crypto_auction.auction import Auction, AuctionConfig, AuctionState
 from crypto_auction.commitment import commit
@@ -19,18 +18,7 @@ def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
 
 
 def _proof_dict(bid, randomness_hex, commitment_hex, min_bid, max_bid):
-    proof = prove_range(bid, randomness_hex, commitment_hex, min_bid, max_bid)
-    return {
-        "commitment_hex": proof.commitment_hex,
-        "min_bid": proof.min_bid,
-        "max_bid": proof.max_bid,
-        "low_commitment_hex": proof.low_commitment_hex,
-        "low_challenge_hex": proof.low_challenge_hex,
-        "low_response": proof.low_response,
-        "high_commitment_hex": proof.high_commitment_hex,
-        "high_challenge_hex": proof.high_challenge_hex,
-        "high_response": proof.high_response,
-    }
+    return prove_range(bid, randomness_hex, commitment_hex, min_bid, max_bid).to_dict()
 
 
 def run_full_auction(bids_map, min_bid=100, max_bid=5000):
@@ -270,7 +258,7 @@ class TestPhase3Reveal(unittest.TestCase):
         pd = _proof_dict(4000, alice.randomness_hex, alice.commitment_hex, 100, 5000)
         auction.submit_proof("bidder_0", pd)
         forged = forged_range_proof(mallory.commitment_hex, 100, 5000)
-        auction.submit_proof("bidder_1", asdict(forged))
+        auction.submit_proof("bidder_1", forged.to_dict())
         auction.submit_reveal("bidder_0", 4000, alice.randomness_hex)
         auction.submit_reveal("bidder_1", 999_999, mallory.randomness_hex)
         self.assertEqual(auction.get_winner()["name"], "Alice")

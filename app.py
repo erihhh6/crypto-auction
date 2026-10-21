@@ -23,8 +23,9 @@ Endpoints:
 
 Request rules:
   Every POST must be sent as application/json (415 otherwise) with a JSON object
-  body (400 otherwise). Every error, including unknown routes and unexpected
-  server errors, is returned as {"success": false, "error": "<reason>"}.
+  body (400 otherwise). Integers must lie in [0, 2**53 - 1]. Every error,
+  including unknown routes and unexpected server errors, is returned as
+  {"success": false, "error": "<reason>"}.
 """
 
 import json
@@ -34,11 +35,16 @@ from flask import Flask, abort, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from crypto_auction.auction import Auction, AuctionConfig
-from crypto_auction.commitment import MAX_BID, commit
+from crypto_auction.commitment import commit
 from crypto_auction.zkp import prove_range
 
 app = Flask(__name__)
 
+# Largest integer the API accepts. JSON numbers above 2**53 - 1 are not exact
+# in JavaScript (RFC 7493, I-JSON), and the browser handles bids as numbers: a
+# larger typed bid would silently become a different one. It is far below the
+# commitment's own limit, MAX_BID = 2**64 - 1.
+MAX_JSON_INT = 2**53 - 1
 MAX_BIDDERS = 10
 MAX_NAME_LENGTH = 100
 # 32 random bytes, hex-encoded: the only randomness format commit() produces.
@@ -102,14 +108,14 @@ def _field(data: dict, name: str):
 
 
 def _int_field(data: dict, name: str) -> int:
-    """A JSON integer in [0, MAX_BID], the range a commitment can encode."""
+    """A JSON integer in [0, MAX_JSON_INT]."""
     value = _field(data, name)
     # bool is a subclass of int and a float would be truncated silently, so
     # only genuine JSON integers are accepted.
     if isinstance(value, bool) or not isinstance(value, int):
         abort(400, description=f"'{name}' must be an integer.")
-    if not 0 <= value <= MAX_BID:
-        abort(400, description=f"'{name}' must be between 0 and {MAX_BID}.")
+    if not 0 <= value <= MAX_JSON_INT:
+        abort(400, description=f"'{name}' must be between 0 and {MAX_JSON_INT}.")
     return value
 
 
@@ -335,17 +341,7 @@ def submit_prove():
     except ValueError as exc:
         abort(400, description=str(exc))
 
-    proof_dict = {
-        "commitment_hex": proof.commitment_hex,
-        "min_bid": proof.min_bid,
-        "max_bid": proof.max_bid,
-        "low_commitment_hex": proof.low_commitment_hex,
-        "low_challenge_hex": proof.low_challenge_hex,
-        "low_response": proof.low_response,
-        "high_commitment_hex": proof.high_commitment_hex,
-        "high_challenge_hex": proof.high_challenge_hex,
-        "high_response": proof.high_response,
-    }
+    proof_dict = proof.to_dict()
 
     try:
         result = current.submit_proof(bidder_id, proof_dict)

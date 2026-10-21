@@ -34,10 +34,22 @@ until it is replaced by Pedersen commitments with a bit-decomposition range proo
 
 import hashlib
 import os
+import re
 import struct
 from dataclasses import dataclass
+from typing import Self
 
 from crypto_auction.commitment import verify as verify_commitment
+
+_HEX_INT = re.compile(r"[0-9a-f]+")
+
+
+def _hex_to_int(value) -> int:
+    # int(value, 16) alone would also accept "0x1f", "-1f", "1_f" and padding
+    # whitespace; only the plain lowercase hex that to_dict() emits is valid.
+    if not isinstance(value, str) or not _HEX_INT.fullmatch(value):
+        raise ValueError(f"Expected a lowercase hex string, got {value!r}.")
+    return int(value, 16)
 
 
 @dataclass
@@ -60,6 +72,47 @@ class RangeProof:
     high_commitment_hex: str  # C_high = SHA256((max-bid) || r_high)
     high_challenge_hex: str  # e_high = H(C || C_high)
     high_response: int  # z_high = r_high_int + e_high * r_int
+
+    def to_dict(self) -> dict:
+        """
+        Serialise the proof for JSON.
+
+        The responses are ~380-bit integers, and JSON numbers above 2**53 are
+        not exact in JavaScript, so they are sent as lowercase hex strings like
+        the other proof fields.
+        """
+        return {
+            "commitment_hex": self.commitment_hex,
+            "min_bid": self.min_bid,
+            "max_bid": self.max_bid,
+            "low_commitment_hex": self.low_commitment_hex,
+            "low_challenge_hex": self.low_challenge_hex,
+            "low_response_hex": f"{self.low_response:x}",
+            "high_commitment_hex": self.high_commitment_hex,
+            "high_challenge_hex": self.high_challenge_hex,
+            "high_response_hex": f"{self.high_response:x}",
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Self:
+        """
+        Parse a proof serialised by to_dict().
+
+        Raises:
+            KeyError: If a field is missing.
+            ValueError: If a response is not a lowercase hex string.
+        """
+        return cls(
+            commitment_hex=data["commitment_hex"],
+            min_bid=data["min_bid"],
+            max_bid=data["max_bid"],
+            low_commitment_hex=data["low_commitment_hex"],
+            low_challenge_hex=data["low_challenge_hex"],
+            low_response=_hex_to_int(data["low_response_hex"]),
+            high_commitment_hex=data["high_commitment_hex"],
+            high_challenge_hex=data["high_challenge_hex"],
+            high_response=_hex_to_int(data["high_response_hex"]),
+        )
 
 
 def _fiat_shamir_challenge(*elements: bytes) -> bytes:

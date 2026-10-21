@@ -42,18 +42,7 @@ def main() -> None:
         proof = prove_range(
             bid, s["randomness_hex"], commitment_hex, config.min_bid, config.max_bid
         )
-        proof_dict = {
-            "commitment_hex": proof.commitment_hex,
-            "min_bid": proof.min_bid,
-            "max_bid": proof.max_bid,
-            "low_commitment_hex": proof.low_commitment_hex,
-            "low_challenge_hex": proof.low_challenge_hex,
-            "low_response": proof.low_response,
-            "high_commitment_hex": proof.high_commitment_hex,
-            "high_challenge_hex": proof.high_challenge_hex,
-            "high_response": proof.high_response,
-        }
-        result = auction.submit_proof(bidder_id, proof_dict)
+        result = auction.submit_proof(bidder_id, proof.to_dict())
         print(f"  {name}: proof_valid={result['proof_valid']}  -> phase={result['phase']}")
 
     print(f"\nAuction state: {auction.state.value}")

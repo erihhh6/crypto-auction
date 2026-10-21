@@ -145,7 +145,7 @@ class Auction:
 
         Args:
             bidder_id: Identifier of the bidder submitting the proof.
-            proof_data: Serialised RangeProof as a plain dict.
+            proof_data: A RangeProof serialised with RangeProof.to_dict().
 
         Returns:
             dict with keys: success, proof_valid, phase, bidder_id, message.
@@ -172,17 +172,7 @@ class Auction:
         # from the auction, not from the proof: an otherwise valid proof of a
         # different statement says nothing about this bidder's bid.
         try:
-            proof = RangeProof(
-                commitment_hex=proof_data["commitment_hex"],
-                min_bid=proof_data["min_bid"],
-                max_bid=proof_data["max_bid"],
-                low_commitment_hex=proof_data["low_commitment_hex"],
-                low_challenge_hex=proof_data["low_challenge_hex"],
-                low_response=proof_data["low_response"],
-                high_commitment_hex=proof_data["high_commitment_hex"],
-                high_challenge_hex=proof_data["high_challenge_hex"],
-                high_response=proof_data["high_response"],
-            )
+            proof = RangeProof.from_dict(proof_data)
             is_valid = (
                 proof.commitment_hex == bidder.commitment_hex
                 and proof.min_bid == self.config.min_bid

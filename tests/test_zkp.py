@@ -1,10 +1,15 @@
-"""Tests for crypto/zkp.py"""
+"""Tests for crypto_auction.zkp"""
 
 import os
 import unittest
 
 from crypto_auction.commitment import commit
-from crypto_auction.zkp import _fiat_shamir_challenge, prove_range, verify_range_proof
+from crypto_auction.zkp import (
+    RangeProof,
+    _fiat_shamir_challenge,
+    prove_range,
+    verify_range_proof,
+)
 from tests.support import forged_range_proof, known_bug
 
 
@@ -108,6 +113,37 @@ class TestVerifyRangeProof(unittest.TestCase):
         proof = self._valid_proof()
         proof.commitment_hex = "cc" * 32
         self.assertFalse(verify_range_proof(proof))
+
+
+class TestSerialisation(unittest.TestCase):
+    def _proof(self):
+        c = commit(1500)
+        return prove_range(1500, c.randomness_hex, c.commitment_hex, 100, 5000)
+
+    def test_round_trip_preserves_the_proof(self):
+        proof = self._proof()
+        restored = RangeProof.from_dict(proof.to_dict())
+        self.assertEqual(restored, proof)
+        self.assertTrue(verify_range_proof(restored))
+
+    def test_responses_are_sent_as_hex_strings(self):
+        proof = self._proof()
+        data = proof.to_dict()
+        self.assertEqual(int(data["low_response_hex"], 16), proof.low_response)
+        self.assertEqual(int(data["high_response_hex"], 16), proof.high_response)
+        self.assertNotIn("low_response", data)  # no raw ~380-bit integers in the payload
+
+    def test_rejects_non_canonical_response_encodings(self):
+        valid = self._proof().to_dict()
+        for bad in ("0x1f", "-1f", "1_f", " 1f", "1F", "", 31):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                RangeProof.from_dict({**valid, "low_response_hex": bad})
+
+    def test_missing_field_raises_key_error(self):
+        data = self._proof().to_dict()
+        del data["high_response_hex"]
+        with self.assertRaises(KeyError):
+            RangeProof.from_dict(data)
 
 
 class TestSoundness(unittest.TestCase):

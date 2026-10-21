@@ -5,8 +5,7 @@ from unittest import mock
 
 import app as app_module
 from crypto_auction.auction import Auction
-from crypto_auction.commitment import MAX_BID, verify
-from tests.support import known_bug
+from crypto_auction.commitment import verify
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
@@ -146,9 +145,9 @@ class TestCreate(ApiTestCase):
         self.assertEqual(state["state"], "open")
         self.assertTrue(all(b["commitment_hex"] is None for b in state["bidders"]))
 
-    def test_rejects_bounds_that_do_not_fit_uint64(self):
-        self.assert_error(self.create(max_bid=MAX_BID + 1))
-        self.assert_ok(self.create(max_bid=MAX_BID))
+    def test_rejects_integers_javascript_cannot_represent_exactly(self):
+        self.assert_error(self.create(max_bid=2**53))
+        self.assert_ok(self.create(max_bid=2**53 - 1))
 
     def test_rejects_negative_min_bid(self):
         self.assert_error(self.create(min_bid=-50))
@@ -300,7 +299,6 @@ class TestProve(ApiTestCase):
         self.prove_all(self.commit_all())
         self.assertEqual(self.state()["state"], "proved")
 
-    @known_bug("proof responses are ~380-bit JSON numbers; JavaScript loses precision above 2**53")
     def test_proof_numbers_are_exact_in_javascript(self):
         secrets = self.commit_all()
         data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
