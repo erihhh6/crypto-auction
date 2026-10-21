@@ -1,0 +1,39 @@
+# Tool configuration only. Packaging metadata ([project]) arrives with the
+# src/ layout, once the code is an installable package.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"  # oldest Python in the CI matrix
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # import sorting
+    "B",       # flake8-bugbear: likely bugs
+    "UP",      # pyupgrade: modern syntax for the target version
+    "SIM",     # flake8-simplify
+    "C4",      # flake8-comprehensions
+    "S",       # flake8-bandit: security smells, relevant for a crypto project
+    "RUF",     # ruff-specific checks
+]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+# An xfail test that starts passing must fail the run, so a fixed bug
+# cannot hide behind a stale known-bug marker.
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+# Measure the project directory rather than named modules, so a module no
+# test imports (e.g. app.py) is reported as 0% instead of silently dropped.
+source = ["."]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ['if __name__ == "__main__":']

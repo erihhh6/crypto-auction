@@ -70,7 +70,7 @@ PHASE 3 — REVEAL
 ## How to Run
 
 ```bash
-pip install flask
+pip install -r requirements.txt
 python app.py
 # Open http://localhost:5000
 ```
@@ -83,10 +83,13 @@ python crypto/zkp.py          # ZK range proof demo
 python crypto/auction.py      # full 3-bidder simulation
 ```
 
-Run the test suite:
+Development setup (tests, coverage, lint):
 
 ```bash
-python -m unittest discover -s tests -v
+pip install -r requirements-dev.txt
+pytest --cov                # test suite with branch coverage
+ruff check .                # lint
+ruff format --check .       # formatting
 ```
 
 ---
