@@ -95,6 +95,16 @@ test("actions panel escapes the item and winner names", () => {
   assert.equal(rendered.split(ESCAPED).length - 1, 2);
 });
 
+test("proof summary reads the range proof format the API returns", () => {
+  const { app } = loadApp();
+  // Shape of RangeProof.to_dict(): per side, one bit commitment per bit.
+  const commitments = Array.from({ length: 13 }, (_, i) => "02" + String(i).padStart(64, "0"));
+  const proof = { low: { bit_commitments: commitments, bit_proofs: [] }, high: {} };
+  const summary = app.proofSummary(proof);
+  assert.equal(summary["bits per side"], 13);
+  assert.equal(summary["first bit commitment"], "0200000000000000…");
+});
+
 test("log entries escape titles, keys and values", () => {
   const { app } = loadApp();
   const entry = app.buildLogEntry("public", `${PAYLOAD} committed`, { [PAYLOAD]: PAYLOAD });

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crypto-auction"
 version = "0.1.0"
-description = "Sealed-bid auction demo with hash commitments and range proofs"
+description = "Sealed-bid auction demo with Pedersen commitments and zero-knowledge range proofs"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

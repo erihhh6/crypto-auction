@@ -2,8 +2,9 @@
 
 // ---------------------------------------------------------------------------
 // Local state — nothing here is ever sent to the server unnecessarily.
-// bidderSecrets stores (bid, randomness_hex) received once from /api/commit.
-// The server discards randomness_hex after returning it; only the client holds it.
+// bidderSecrets stores (bid, randomness_hex) received once from /api/commit;
+// randomness_hex is the commitment's blinding factor r. The server discards it
+// after returning it; only the client holds it.
 // ---------------------------------------------------------------------------
 const localState = {
   auction: null,           // config returned by /api/create
@@ -29,6 +30,14 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+/** Log fields describing a range proof: one bit commitment per bit, per side. */
+function proofSummary(proof) {
+  return {
+    "bits per side": proof.low.bit_commitments.length,
+    "first bit commitment": truncHex(proof.low.bit_commitments[0]),
+  };
 }
 
 /** Truncate a hex string for display: first 16 chars + "…" */
@@ -174,7 +183,7 @@ async function commitBid(bidderId) {
     });
     addPrivateLogEntry(bidderId, `${bidderName} — your secrets`, {
       bid:        fmtBid(bid),
-      randomness: truncHex(data.randomness_hex) + " (keep private)",
+      "blinding r": truncHex(data.randomness_hex) + " (keep private)",
     });
 
     await refreshState();
@@ -203,10 +212,10 @@ async function proveBid(bidderId) {
     });
 
     const bidderName = getBidderName(bidderId);
-    addPublicLogEntry(`${bidderName} ZK proof ${data.proof_valid ? "✓ valid" : "✗ invalid"}`, {
-      low_commitment:  truncHex(data.proof_public.low_commitment_hex),
-      high_commitment: truncHex(data.proof_public.high_commitment_hex),
-    });
+    addPublicLogEntry(
+      `${bidderName} ZK proof ${data.proof_valid ? "✓ valid" : "✗ invalid"}`,
+      proofSummary(data.proof_public),
+    );
 
     await refreshState();
   } catch (err) {
@@ -415,11 +424,11 @@ function renderActionsPanel(state) {
   // Phase description
   const phaseDescriptions = {
     open:      { title: "Phase 1 — Commit", color: "var(--color-commit)",
-      desc: "Each bidder submits a cryptographic commitment <code>C = SHA256(bid ‖ r)</code>. The auctioneer sees only the hash, not the bid." },
+      desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1. C hides the bid, and the bidder cannot change it afterwards." },
     committed: { title: "Phase 2 — ZK Prove", color: "var(--color-prove)",
-      desc: "Each bidder proves their bid is in the valid range <strong>[min, max]</strong> using a Sigma-protocol ZK range proof, without revealing the bid." },
+      desc: "Each bidder proves in zero knowledge that the committed bid lies in <strong>[min, max]</strong>: a range proof made of one OR-proof per bit, checked without revealing the bid." },
     proved:    { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
-      desc: "Each bidder reveals <code>(bid, randomness)</code>. The auctioneer verifies the commitment opening. Highest verified bid wins; ties go to the earliest commitment." },
+      desc: "Each bidder reveals <code>(bid, r)</code>. Anyone can check that <code>bid·G + r·H</code> equals the commitment. Highest verified bid wins; ties go to the earliest commitment." },
     finished:  { title: "Auction Complete", color: "var(--color-finish)",
       desc: "All bids have been revealed and verified. The winner has been determined." },
   };
@@ -702,7 +711,7 @@ async function startDemo() {
       addPublicLogEntry(`${name} committed`, { commitment: truncHex(data.commitment_hex) });
       addPrivateLogEntry(bidderId, `${name} — secret (demo)`, {
         bid:        fmtBid(bid),
-        randomness: truncHex(data.randomness_hex),
+        "blinding r": truncHex(data.randomness_hex),
       });
       await refreshState();
     }
@@ -722,10 +731,10 @@ async function startDemo() {
         bid:            secret.bid,
         randomness_hex: secret.randomness_hex,
       });
-      addPublicLogEntry(`${name} ZK proof ${data.proof_valid ? "valid" : "INVALID"}`, {
-        low_commitment:  truncHex(data.proof_public.low_commitment_hex),
-        high_commitment: truncHex(data.proof_public.high_commitment_hex),
-      });
+      addPublicLogEntry(
+        `${name} ZK proof ${data.proof_valid ? "valid" : "INVALID"}`,
+        proofSummary(data.proof_public),
+      );
       await refreshState();
     }
 

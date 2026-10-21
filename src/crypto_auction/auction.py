@@ -7,9 +7,9 @@ Implements a sealed-bid auction with a 3-phase cryptographic protocol:
   OPEN → COMMITTED → PROVED → FINISHED
 
 State transitions:
-  OPEN      → COMMITTED : all bidders have submitted their hash commitments
+  OPEN      → COMMITTED : all bidders have submitted Pedersen commitments
   COMMITTED → PROVED    : all bidders have submitted a range proof (valid or not)
-  PROVED    → FINISHED  : all bidders have revealed (bid, randomness); the winner
+  PROVED    → FINISHED  : all bidders have revealed (bid, blinding); the winner
                           is determined from the verified reveals
 
 Security model: honest-but-curious auctioneer.
@@ -18,12 +18,17 @@ learn actual bid values only in phase 3. Not met yet: the server currently
 receives bids in plaintext (see README).
 """
 
+import secrets
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any
 
-from crypto_auction.commitment import verify as verify_commitment
-from crypto_auction.zkp import RangeProof, verify_range_proof
+from crypto_auction.pedersen import N, decode_point, encode_scalar
+from crypto_auction.pedersen import verify as verify_opening
+from crypto_auction.range_proof import RangeProof, verify_range
+from crypto_auction.transcript import encode_parts
+
+_PROOF_DOMAIN = b"crypto-auction/bid-range-proof/v1"
 
 
 class AuctionState(Enum):
@@ -40,14 +45,14 @@ class BidderState:
     bidder_id: str
     name: str
     # Phase 1 — public after commit
-    commitment_hex: str | None = None
+    commitment_hex: str | None = None  # canonical encoding of C = bid·G + blinding·H
     commit_order: int | None = None  # 0 for the first commitment received, 1 next, ...
     # Phase 2 — public after prove
     range_proof: dict[str, Any] | None = None  # RangeProof serialised as dict
     proof_valid: bool | None = None
     # Phase 3 — public after reveal
     revealed_bid: int | None = None
-    randomness_hex: str | None = None  # becomes public at reveal
+    revealed_blinding: int | None = None  # becomes public at reveal
     commitment_verified: bool | None = None
 
 
@@ -113,6 +118,13 @@ class Auction:
         # Ties go to the earliest commitment. A counter orders commitments
         # deterministically, where timestamps could collide or be skewed.
         self._commits_received = 0
+        # Bound into every range proof's context, so a proof made for one
+        # auction cannot be replayed in another.
+        self.auction_id = secrets.token_hex(16)
+
+    def proof_context(self, bidder_id: str) -> bytes:
+        """What a bidder's range proof is bound to: this auction and this bidder."""
+        return encode_parts(_PROOF_DOMAIN, self.auction_id.encode(), bidder_id.encode())
 
     # ------------------------------------------------------------------
     # Phase 1 — Commit
@@ -120,20 +132,22 @@ class Auction:
 
     def submit_commitment(self, bidder_id: str, commitment_hex: str) -> CommitResult:
         """
-        Record a bidder's hash commitment.
+        Record a bidder's Pedersen commitment.
 
         Allowed in states OPEN and COMMITTED (so bidders can commit asynchronously).
         Advances to COMMITTED once all bidders have committed.
 
         Args:
             bidder_id: Identifier of the bidder submitting the commitment.
-            commitment_hex: SHA-256 hex digest of (bid_bytes || randomness).
+            commitment_hex: C = bid·G + blinding·H as a compressed point
+                (pedersen.encode_point).
 
         Returns:
             The phase after this commitment, and a message for the protocol log.
 
         Raises:
-            ValueError: On invalid state, unknown bidder_id, or duplicate commit.
+            ValueError: On invalid state, unknown bidder_id, duplicate commit, or
+                a commitment that is not a canonically encoded curve point.
         """
         if self.state not in (AuctionState.OPEN, AuctionState.COMMITTED):
             raise ValueError(
@@ -147,6 +161,7 @@ class Auction:
             raise ValueError(
                 f"Bidder '{bidder.name}' has already committed. Double-commit is not allowed."
             )
+        decode_point(commitment_hex)  # raises ValueError unless canonical and on the curve
 
         bidder.commitment_hex = commitment_hex
         bidder.commit_order = self._commits_received
@@ -165,8 +180,9 @@ class Auction:
         """
         Receive and verify a ZK range proof from a bidder.
 
-        The proof must be about this bidder's commitment and this auction's
-        [min_bid, max_bid]; a proof of any other statement is recorded as invalid.
+        The proof must show that this bidder's commitment hides a bid in this
+        auction's [min_bid, max_bid], for this auction and bidder
+        (proof_context); a proof of any other statement is recorded as invalid.
 
         Allowed in states COMMITTED and PROVED.
         Advances to PROVED once every bidder has submitted a proof, valid or not.
@@ -196,16 +212,17 @@ class Auction:
         if bidder.proof_valid is not None:
             raise ValueError(f"Bidder '{bidder.name}' has already submitted a proof.")
 
-        # Deserialise and verify. The statement (commitment and range) must come
-        # from the auction, not from the proof: an otherwise valid proof of a
-        # different statement says nothing about this bidder's bid.
+        # Deserialise and verify. The statement (commitment, range and context)
+        # comes from the auction; the proof carries none of it, so a valid
+        # proof of a different statement cannot pass for this one.
         try:
             proof = RangeProof.from_dict(proof_data)
-            is_valid = (
-                proof.commitment_hex == bidder.commitment_hex
-                and proof.min_bid == self.config.min_bid
-                and proof.max_bid == self.config.max_bid
-                and verify_range_proof(proof)
+            is_valid = verify_range(
+                decode_point(bidder.commitment_hex),
+                proof,
+                self.config.min_bid,
+                self.config.max_bid,
+                self.proof_context(bidder_id),
             )
         except (KeyError, TypeError, ValueError):
             is_valid = False
@@ -226,9 +243,9 @@ class Auction:
     # Phase 3 — Reveal
     # ------------------------------------------------------------------
 
-    def submit_reveal(self, bidder_id: str, bid: int, randomness_hex: str) -> RevealResult:
+    def submit_reveal(self, bidder_id: str, bid: int, blinding: int) -> RevealResult:
         """
-        Accept a bidder's reveal of (bid, randomness) and verify against commitment.
+        Accept a bidder's reveal of (bid, blinding) and verify against commitment.
 
         Bidders with a failed commitment verification are marked as cheaters and
         excluded from the winner determination. Bidders whose range proof was
@@ -240,15 +257,19 @@ class Auction:
         Args:
             bidder_id: Identifier of the bidder revealing.
             bid: The actual bid value being revealed.
-            randomness_hex: The secret randomness used in Phase 1.
+            blinding: The commitment's blinding factor, a scalar in [0, n).
 
         Returns:
             Whether the opening matches the commitment, the phase after this
             reveal, a log message, and the winner once the auction is finished.
 
         Raises:
-            ValueError: On invalid state, unknown bidder, missing proof, or duplicate reveal.
+            ValueError: On invalid state, unknown bidder, missing proof, duplicate
+                reveal, or a blinding that is not a scalar in [0, n). Malformed
+                input is rejected rather than counted as a failed opening.
         """
+        if isinstance(blinding, bool) or not isinstance(blinding, int) or not 0 <= blinding < N:
+            raise ValueError("The blinding factor must be an integer in [0, n).")
         if self.state != AuctionState.PROVED:
             raise ValueError(f"Cannot reveal in state '{self.state.value}'. Expected PROVED.")
         if bidder_id not in self.bidders:
@@ -264,11 +285,10 @@ class Auction:
                 f"Bidder '{bidder.name}' has already revealed. Duplicate reveal is not allowed."
             )
 
-        # Verify commitment opening
-        is_verified = verify_commitment(bid, randomness_hex, bidder.commitment_hex)
+        is_verified = verify_opening(decode_point(bidder.commitment_hex), bid, blinding)
 
         bidder.revealed_bid = bid
-        bidder.randomness_hex = randomness_hex
+        bidder.revealed_blinding = blinding
         bidder.commitment_verified = is_verified
 
         if all(b.revealed_bid is not None for b in self.bidders.values()):
@@ -298,7 +318,7 @@ class Auction:
         """
         Return the complete public state visible to all participants.
 
-        Bid values and randomness are included only once the auction is FINISHED.
+        Bids and blinding factors are included only once the auction is FINISHED.
         """
         bidders_public = []
         for b in self.bidders.values():
@@ -316,11 +336,14 @@ class Auction:
             # bidders have revealed.
             if self.state == AuctionState.FINISHED:
                 entry["revealed_bid"] = b.revealed_bid
-                entry["randomness_hex"] = b.randomness_hex
+                entry["randomness_hex"] = (
+                    None if b.revealed_blinding is None else encode_scalar(b.revealed_blinding)
+                )
             bidders_public.append(entry)
 
         winner = self.get_winner()
         return {
+            "auction_id": self.auction_id,
             "state": self.state.value,
             "item_name": self.config.item_name,
             "min_bid": self.config.min_bid,
@@ -348,8 +371,8 @@ class Auction:
         # A bid only counts if every check passed: the range proof vouches that
         # the committed bid lies in [min, max], and the opening shows the
         # revealed bid is the committed one. The range is checked again on the
-        # revealed bid as defence in depth: the current range proof can be
-        # forged, and once a bid is revealed the check costs nothing.
+        # revealed bid as defence in depth: it costs nothing once a bid is
+        # revealed, and keeps the auction safe should the proof system break.
         # A verified bidder always has a commitment and a commit order; the
         # explicit checks let the type checker see that too.
         candidates = [

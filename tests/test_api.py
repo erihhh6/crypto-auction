@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 from crypto_auction.auction import Auction
-from crypto_auction.commitment import verify
+from crypto_auction.pedersen import N, decode_point, decode_scalar, verify
 from crypto_auction.web import create_app
 from crypto_auction.web.api import MAX_NAME_LENGTH
 
@@ -193,8 +193,8 @@ class TestCommit(ApiTestCase):
 
     def test_returns_opening_for_the_commitment(self):
         data = self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=1200))
-        self.assertEqual(len(data["commitment_hex"]), 64)
-        self.assertTrue(verify(1200, data["randomness_hex"], data["commitment_hex"]))
+        point = decode_point(data["commitment_hex"])  # a compressed curve point
+        self.assertTrue(verify(point, 1200, decode_scalar(data["randomness_hex"])))
 
     def test_commitment_is_published_in_state(self):
         data = self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=1200))
@@ -244,8 +244,9 @@ class TestProve(ApiTestCase):
         secrets = self.commit_all()
         data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
         self.assertTrue(data["proof_valid"])
-        commitment = self.state()["bidders"][0]["commitment_hex"]
-        self.assertEqual(data["proof_public"]["commitment_hex"], commitment)
+        bits = (5000 - 100).bit_length()  # one bit commitment per bit of max - min
+        for side in ("low", "high"):
+            self.assertEqual(len(data["proof_public"][side]["bit_commitments"]), bits)
         self.assertTrue(self.state()["bidders"][0]["proof_valid"])
 
     def test_rejects_proof_before_everyone_committed(self):
@@ -294,9 +295,17 @@ class TestProve(ApiTestCase):
     def test_proof_numbers_are_exact_in_javascript(self):
         secrets = self.commit_all()
         data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
-        for field, value in data["proof_public"].items():
-            if isinstance(value, int):
-                self.assertLessEqual(abs(value), 2**53 - 1, field)
+
+        def ints(value):
+            """Every integer anywhere in a decoded JSON value."""
+            if isinstance(value, dict):
+                value = list(value.values())
+            if isinstance(value, list):
+                return [i for item in value for i in ints(item)]
+            return [value] if isinstance(value, int) and not isinstance(value, bool) else []
+
+        for number in ints(data):
+            self.assertLessEqual(abs(number), 2**53 - 1)
 
 
 class TestReveal(ApiTestCase):
@@ -352,8 +361,15 @@ class TestReveal(ApiTestCase):
     def test_malformed_randomness_is_rejected_without_disqualifying(self):
         secrets = self.commit_all()
         self.prove_all(secrets)
-        typo = {**secrets["bidder_0"], "randomness_hex": "not-hex"}
-        self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **typo))
+        malformed = (
+            "not-hex",
+            secrets["bidder_0"]["randomness_hex"].upper(),  # one encoding per scalar
+            f"{N:064x}",  # not below the curve order
+        )
+        for bad in malformed:
+            with self.subTest(bad=bad):
+                typo = {**secrets["bidder_0"], "randomness_hex": bad}
+                self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **typo))
         # Rejected before reaching the auction, so the bidder can still reveal.
         data = self.assert_ok(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
         self.assertTrue(data["verified"])

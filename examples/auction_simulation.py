@@ -1,8 +1,8 @@
 """Run a full three-bidder auction (commit, prove, reveal) without the web app."""
 
 from crypto_auction.auction import Auction, AuctionConfig
-from crypto_auction.commitment import Commitment, commit
-from crypto_auction.zkp import prove_range
+from crypto_auction.pedersen import Commitment, commit, encode_point
+from crypto_auction.range_proof import prove_range
 
 
 def main() -> None:
@@ -29,15 +29,23 @@ def main() -> None:
     for bidder_id, (name, bid) in bids.items():
         c = commit(bid)
         secrets[bidder_id] = c
-        committed = auction.submit_commitment(bidder_id, c.commitment_hex)
-        print(f"  {name}: commitment={c.commitment_hex[:16]}...  -> phase={committed.phase.value}")
+        commitment_hex = encode_point(c.point)
+        committed = auction.submit_commitment(bidder_id, commitment_hex)
+        print(f"  {name}: commitment={commitment_hex[:16]}...  -> phase={committed.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
     print("\n--- PHASE 2: ZK PROVE ---")
     for bidder_id, (name, bid) in bids.items():
         c = secrets[bidder_id]
-        proof = prove_range(bid, c.randomness_hex, c.commitment_hex, config.min_bid, config.max_bid)
+        proof = prove_range(
+            c.point,
+            bid,
+            c.blinding,
+            config.min_bid,
+            config.max_bid,
+            auction.proof_context(bidder_id),
+        )
         proved = auction.submit_proof(bidder_id, proof.to_dict())
         print(f"  {name}: proof_valid={proved.proof_valid}  -> phase={proved.phase.value}")
 
@@ -45,7 +53,7 @@ def main() -> None:
 
     print("\n--- PHASE 3: REVEAL ---")
     for bidder_id, (name, bid) in bids.items():
-        revealed = auction.submit_reveal(bidder_id, bid, secrets[bidder_id].randomness_hex)
+        revealed = auction.submit_reveal(bidder_id, bid, secrets[bidder_id].blinding)
         print(f"  {name}: bid={bid}, verified={revealed.verified}  -> phase={revealed.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")

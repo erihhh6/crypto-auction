@@ -13,9 +13,9 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 > [!WARNING]
 > **Work in progress.** This started as a prototype and is being hardened step
-> by step. Two of its headline guarantees do **not** hold yet: the server sees
-> every bid in plaintext, and the range proof can be forged. See
-> [Limitations](#limitations) for the current status.
+> by step. One headline guarantee does **not** hold yet: the server sees every
+> bid in plaintext, because it computes commitments and proofs on the bidders'
+> behalf. See [Limitations](#limitations) for the current status.
 
 ---
 
@@ -29,9 +29,9 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 | Property | Mechanism | Intended guarantee | Status |
 |---|---|---|---|
-| **Hiding** | SHA-256 commitment `C = SHA256(bid ‖ r)` | Auctioneer cannot learn bids before reveal | **Not yet**: the server receives the bid in plaintext |
-| **Binding** | Collision resistance of SHA-256 | Bidders cannot change their bid after committing | Holds |
-| **Soundness** | ZK range proof (Sigma + Fiat-Shamir) | Bids provably within `[min, max]` without disclosure | **Not yet**: proofs can be forged |
+| **Hiding** | Pedersen commitment `C = bid·G + r·H` | Auctioneer cannot learn bids before reveal | **Not yet**: the commitment is perfectly hiding, but the server receives the bid in plaintext |
+| **Binding** | Discrete logarithm hardness on secp256k1 | Bidders cannot change their bid after committing | Holds |
+| **Soundness** | ZK range proof (bit decomposition + OR-proofs, Fiat-Shamir) | Bids provably within `[min, max]` without disclosure | Holds |
 | **Verifiability** | Commitment opening at reveal | Anyone can audit the final result | Holds: openings are public after the reveal |
 
 ---
@@ -43,9 +43,9 @@ protocol but tries to learn bids before the reveal phase. The protocol is
 designed so that:
 
 ```
-Phase 1 — COMMIT:   auctioneer sees only C = SHA256(bid ‖ r)
+Phase 1 — COMMIT:   auctioneer sees only C = bid·G + r·H
 Phase 2 — ZK PROVE: auctioneer knows bid ∈ [min, max] without seeing bid
-Phase 3 — REVEAL:   auctioneer verifies SHA256(bid ‖ r) == C
+Phase 3 — REVEAL:   auctioneer verifies bid·G + r·H == C
 ```
 
 **The current implementation does not meet this model yet.** The browser sends
@@ -61,20 +61,20 @@ commitments but not the underlying bid values until phase 3.
 
 ```
 PHASE 1 — COMMIT
-  Bidder i chooses bid_i and randomness r_i (32 random bytes)
-  Computes   C_i = SHA256(bid_i_bytes ‖ r_i)
+  Bidder i chooses bid_i and a random blinding factor r_i ∈ [0, n)
+  Computes   C_i = bid_i·G + r_i·H        (Pedersen commitment on secp256k1)
   Sends C_i → auctioneer stores it (bid_i, r_i remain private)
 
-PHASE 2 — ZK VALIDATE
-  Bidder i proves that bid_i ∈ [min_bid, max_bid]
-  using a Sigma protocol with Fiat-Shamir transform (NIZK)
-  without revealing bid_i
-  Auctioneer verifies proof
+PHASE 2 — ZK PROVE
+  Bidder i proves that C_i hides a value in [min_bid, max_bid]
+  (bit-decomposition range proof with Cramer–Damgård–Schoenmakers OR-proofs,
+   non-interactive via Fiat-Shamir, bound to this auction and bidder)
+  Auctioneer verifies it against its own statement (C_i, min_bid, max_bid)
 
 PHASE 3 — REVEAL
   Bidder i reveals (bid_i, r_i)
-  Auctioneer verifies: SHA256(bid_i ‖ r_i) == C_i
-  Winner = argmax(verified bid_i)
+  Auctioneer verifies: bid_i·G + r_i·H == C_i
+  Winner = highest verified in-range bid; ties go to the earliest commitment
 ```
 
 This is the intended protocol. In the current implementation the server
@@ -136,12 +136,10 @@ crypto-auction/
 ├── src/
 │   └── crypto_auction/       # The installable package
 │       ├── __init__.py
-│       ├── commitment.py     # SHA-256 commitment scheme
-│       ├── pedersen.py       # Pedersen commitments on secp256k1 (replacing commitment.py)
+│       ├── pedersen.py       # Pedersen commitments on secp256k1
 │       ├── bit_proof.py      # ZK OR-proof that a Pedersen commitment hides 0 or 1
-│       ├── range_proof.py    # ZK range proof by bit decomposition (replacing zkp.py)
+│       ├── range_proof.py    # ZK range proof by bit decomposition
 │       ├── transcript.py     # Unambiguous encoding for Fiat-Shamir transcripts
-│       ├── zkp.py            # Range proof (Sigma + Fiat-Shamir), currently unsound
 │       ├── auction.py        # State machine + auction logic
 │       ├── service.py        # Runs one auction and the server's protocol steps
 │       └── web/              # Flask app: create_app(), python -m crypto_auction.web
@@ -153,14 +151,12 @@ crypto-auction/
 │               └── style.css # Dark theme CSS
 ├── tests/
 │   ├── js/
-│   │   └── render.test.mjs   # Frontend rendering (HTML escaping), via node --test
-│   ├── support.py            # Shared helpers (known_bug marker, proof forger)
-│   ├── test_commitment.py    # Commitment scheme
+│   │   └── render.test.mjs   # Frontend rendering (HTML escaping, proof summary), via node --test
+│   ├── support.py            # Shared helpers (known_bug marker)
 │   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
 │   ├── test_bit_proof.py     # Bit proof: completeness, soundness, binding
 │   ├── test_range_proof.py   # Range proof, incl. wrap-around and non-bit attacks
-│   ├── test_zkp.py           # Range proof, incl. soundness
-│   ├── test_auction.py       # State machine and winner selection
+│   ├── test_auction.py       # State machine, proof binding and winner selection
 │   ├── test_api.py           # REST API via Flask's test client
 │   └── test_app.py           # Server entry point (debug mode)
 ├── pyproject.toml            # Package metadata and tool configuration
@@ -174,42 +170,49 @@ crypto-auction/
 
 | Primitive | Implementation | Purpose |
 |---|---|---|
-| Commitment | `SHA-256(bid_bytes ‖ randomness)` | Hiding + Binding |
-| ZK Range Proof | Sigma protocol + Fiat-Shamir transform | Validity without disclosure (currently unsound, see below) |
-| Challenge | `SHA-256(commitment ‖ announcement)` | Non-interactive (NIZK) |
-| Reveal | Commitment opening | Auditability |
+| Commitment | Pedersen, `C = v·G + r·H` on secp256k1 | Hiding (perfect) + binding (discrete log) |
+| Bit proof | Cramer–Damgård–Schoenmakers OR-proof | Shows a commitment hides 0 or 1 |
+| Range proof | Bit decomposition of `v − min` and `max − v` | Shows `v ∈ [min, max]` without revealing `v` |
+| Fiat-Shamir | SHA-512 over a length-prefixed transcript | Non-interactive proofs bound to their statement |
+| Reveal | Opening `(v, r)` checked against `C` | Anyone can audit the result |
 
-### Commitment Scheme
+### Pedersen Commitments (`pedersen.py`)
 
 ```
-C = SHA256( struct.pack('>Q', bid) + os.urandom(32) )
+C = v·G + r·H        r uniform in [0, n)
 ```
 
-- **Hiding**: SHA-256 is one-way; C reveals nothing about bid.
-- **Binding**: SHA-256 is collision-resistant; bidder cannot find `(bid', r')` with the same C.
+- **Hiding** (perfect): `r·H` is a uniformly random group element, so `C`
+  reveals nothing about `v`, even to an unbounded adversary.
+- **Binding** (computational): two openings of one `C` would give
+  `log_G(H) = (v − v′) / (r′ − r) mod n`, a discrete logarithm on secp256k1.
+- **Homomorphic**: `C(v₁, r₁) + C(v₂, r₂) = C(v₁ + v₂, r₁ + r₂)`, which the
+  range proof relies on.
 
-### ZK Range Proof
+`G` is the standard secp256k1 generator. `H` is derived by hashing the tag
+`crypto-auction/pedersen/H/v1` to a curve point (try-and-increment, even `y`),
+so nobody knows `log_G(H)`. Points travel as compressed SEC1 encodings, and
+decoding rejects non-canonical ones (an x-coordinate ≥ p).
 
-The range `[min, max]` is decomposed into two non-negativity proofs:
+### Range Proof (`bit_proof.py`, `range_proof.py`)
 
-- `low_val  = bid - min  ≥ 0`
-- `high_val = max - bid  ≥ 0`
+With `d = max − min` and `k = bitlen(d)`, the proof shows that both
+`x = v − min` (committed by `C − min·G`) and `y = max − v` (committed by
+`max·G − C`) lie in `[0, 2^k)`. Each is split into bits: a commitment per bit,
+an OR-proof that it hides 0 or 1, and a check that `Σ 2^i·C_i` equals the
+side's commitment.
 
-Each uses a fresh commitment to the gap value, a Fiat-Shamir challenge
-`e = SHA256(C_original ‖ C_gap)`, and a response `z = r_gap + e * r_original`.
+Since `x + y ≡ d (mod n)` and both `x + y < 2^(k+1)` and `d` are far below the
+group order `n`, `x + y = d` exactly, so `v ∈ [min, max]`. This needs the
+verifier to fix `k` from its own range: a proof free to choose more bits could
+make `x + y` wrap around `n` (the test suite includes this attack).
 
-The verifier checks:
-1. Challenges are correctly re-derived (Fiat-Shamir consistency).
-2. Responses are non-negative.
-
-**This construction is not sound.** Nothing links `C_gap` to the committed bid,
-and `z` is a sum of non-negative numbers, so check 2 always passes. Anyone can
-build an accepted proof from random bytes without knowing the bid (see
-`TestSoundness` in `tests/test_zkp.py`). The challenge also omits `min` and
-`max`, and the responses leak about half of the bits of `r`. Because SHA-256
-commitments have no algebraic structure, this cannot be patched in place; the
-plan is to replace it with Pedersen commitments and a bit-decomposition range
-proof.
+Every bit proof's Fiat-Shamir challenge covers a domain tag, both generators,
+the commitment, the range, the auction and bidder, the side and bit position,
+and the proof's announcements, so a proof cannot be reused for any other
+statement. A proof for a typical bid range (13 bits per side) is about 10 KB
+of JSON and takes about 0.1 s to verify in pure Python. Bulletproofs would be
+far smaller; this construction trades size for simplicity.
 
 ---
 
@@ -219,7 +222,10 @@ proof.
   `/api/commit`, and the server computes the commitment and, later, the range
   proof. The auctioneer therefore learns every bid in phase 1. The target
   design computes both in the browser so the server never sees the bid.
-- **Unsound range proof**: see [ZK Range Proof](#zk-range-proof) above.
+- **Not constant-time**: elliptic-curve arithmetic is pure Python (`ecdsa`),
+  so its timing depends on secret values. Proofs should be generated where
+  timing cannot be observed, which the target design (proving in the bidder's
+  browser) provides.
 - **No authentication**: any client can act as any bidder or reset the auction.
 - **No deadlines**: a bidder who never commits or reveals stalls the auction.
 - **Single-server model**: Production would use MPC for the auctioneer role.
@@ -233,6 +239,9 @@ Known bugs are tracked as `known_bug` tests (see the development setup above);
 ## References
 
 - Commitment Schemes: Goldreich, *Foundations of Cryptography*, Vol. 1
-- Sigma Protocols: Cramer, Damgård & Schoenmakers, *Proofs of Partial Knowledge* (1994)
+- Pedersen Commitments: Pedersen, *Non-Interactive and Information-Theoretic Secure Verifiable Secret Sharing* (CRYPTO 1991)
+- OR-Proofs: Cramer, Damgård & Schoenmakers, *Proofs of Partial Knowledge and Simplified Design of Witness Hiding Protocols* (CRYPTO 1994)
 - Fiat-Shamir Transform: Fiat & Shamir, *How to Prove Yourself* (1986)
+- Weak vs. Strong Fiat-Shamir: Bernhard, Pereira & Warinschi, *How Not to Prove Yourself* (ASIACRYPT 2012)
+- secp256k1: Certicom Research, *SEC 2: Recommended Elliptic Curve Domain Parameters* (2010)
 - Sealed-Bid Auctions: Brandt, *How to Obtain Full Privacy in Auctions* (2006)

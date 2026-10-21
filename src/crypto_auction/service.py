@@ -17,8 +17,8 @@ from crypto_auction.auction import (
     ProofResult,
     RevealResult,
 )
-from crypto_auction.commitment import Commitment, commit
-from crypto_auction.zkp import RangeProof, prove_range
+from crypto_auction.pedersen import Commitment, commit, decode_point, encode_point
+from crypto_auction.range_proof import RangeProof, prove_range
 
 
 class NoAuctionError(LookupError):
@@ -68,14 +68,12 @@ class AuctionService:
                 )
             try:
                 commitment = commit(bid)
-                result = auction.submit_commitment(bidder_id, commitment.commitment_hex)
+                result = auction.submit_commitment(bidder_id, encode_point(commitment.point))
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
             return commitment, result
 
-    def prove(
-        self, bidder_id: str, bid: int, randomness_hex: str
-    ) -> tuple[RangeProof, ProofResult]:
+    def prove(self, bidder_id: str, bid: int, blinding: int) -> tuple[RangeProof, ProofResult]:
         """Prove a bidder's committed bid lies in the auction's range, and record it."""
         with self._lock:
             auction = self._current()
@@ -86,23 +84,24 @@ class AuctionService:
                 raise AuctionRuleError("Bidder has not committed yet.")
             try:
                 proof = prove_range(
+                    decode_point(bidder.commitment_hex),
                     bid,
-                    randomness_hex,
-                    bidder.commitment_hex,
+                    blinding,
                     auction.config.min_bid,
                     auction.config.max_bid,
+                    auction.proof_context(bidder_id),
                 )
                 result = auction.submit_proof(bidder_id, proof.to_dict())
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
             return proof, result
 
-    def reveal(self, bidder_id: str, bid: int, randomness_hex: str) -> RevealResult:
+    def reveal(self, bidder_id: str, bid: int, blinding: int) -> RevealResult:
         """Open a bidder's commitment; the last reveal determines the winner."""
         with self._lock:
             auction = self._current()
             try:
-                return auction.submit_reveal(bidder_id, bid, randomness_hex)
+                return auction.submit_reveal(bidder_id, bid, blinding)
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
 

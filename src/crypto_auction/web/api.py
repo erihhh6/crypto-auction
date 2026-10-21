@@ -2,20 +2,21 @@
 REST API for the sealed-bid cryptographic auction demo (blueprint at /api).
 
 Security note (for CV / README):
-  In a production system, randomness_hex would NEVER pass through the server.
-  The bidder would generate it locally in their browser, compute the commitment
-  client-side, and only send the commitment hash. In this demo the server
-  generates it for simplicity and returns it ONCE to the frontend, which then
-  stores it in JS memory. It is never re-sent to the server except at the prove
-  and reveal steps (where it is needed to compute the ZK proof and verify the
-  commitment opening respectively). The server discards it after each use.
+  In a production system, randomness_hex (the commitment's blinding factor r)
+  would NEVER pass through the server. The bidder would generate it locally in
+  their browser, compute the commitment and the range proof client-side, and
+  only send those. In this demo the server generates it for simplicity and
+  returns it ONCE to the frontend, which then stores it in JS memory. It is
+  never re-sent to the server except at the prove and reveal steps (where it is
+  needed to compute the ZK proof and verify the commitment opening
+  respectively). The server discards it after each use.
 
 Endpoints:
   POST /api/create   — create a new auction session
   GET  /api/state    — fetch current public state
   POST /api/commit   — submit a bid commitment (server generates commitment)
   POST /api/prove    — generate and submit ZK range proof
-  POST /api/reveal   — reveal bid + randomness, verify commitment
+  POST /api/reveal   — reveal bid + blinding factor, verify commitment
   POST /api/reset    — reset the auction session entirely
 
 Request rules:
@@ -23,10 +24,12 @@ Request rules:
   body (400 otherwise). Integers must lie in [0, 2**53 - 1]. Every error,
   including unknown routes and unexpected server errors, is returned as
   {"success": false, "error": "<reason>"}.
+
+Encodings: commitments are compressed secp256k1 points (66 lowercase hex chars),
+the blinding factor a scalar below the group order (64 lowercase hex chars).
 """
 
 import json
-import re
 from typing import Any, NoReturn, cast
 
 from flask import Blueprint, Flask, Response, abort, current_app, jsonify, request
@@ -34,17 +37,16 @@ from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
 
 from crypto_auction.auction import AuctionConfig
+from crypto_auction.pedersen import decode_scalar, encode_point, encode_scalar
 from crypto_auction.service import AuctionRuleError, AuctionService, NoAuctionError
 
 # Largest integer the API accepts. JSON numbers above 2**53 - 1 are not exact
 # in JavaScript (RFC 7493, I-JSON), and the browser handles bids as numbers: a
 # larger typed bid would silently become a different one. It is far below the
-# commitment's own limit, MAX_BID = 2**64 - 1.
+# range proof's own limit, range_proof.MAX_VALUE = 2**64 - 1.
 MAX_JSON_INT = 2**53 - 1
 MAX_BIDDERS = 10
 MAX_NAME_LENGTH = 100
-# 32 random bytes, hex-encoded: the only randomness format commit() produces.
-RANDOMNESS_HEX = re.compile(r"[0-9a-fA-F]{64}")
 
 # Key under which create_app() stores each app's AuctionService.
 SERVICE_KEY = "crypto_auction"
@@ -157,13 +159,18 @@ def _name(value: object, label: str) -> str:
     return name
 
 
-def _randomness_field(data: dict[str, Any]) -> str:
+def _blinding_field(data: dict[str, Any]) -> int:
+    """The commitment's blinding factor, sent as 'randomness_hex'."""
     value = _str_field(data, "randomness_hex")
     # Reject malformed input before it reaches the auction: a typo should be a
     # 400 the client can retry, not a failed reveal that disqualifies the bidder.
-    if not RANDOMNESS_HEX.fullmatch(value):
-        _bad_request("'randomness_hex' must be 64 hexadecimal characters.")
-    return value
+    try:
+        return decode_scalar(value)
+    except ValueError:
+        _bad_request(
+            "'randomness_hex' must be 64 lowercase hexadecimal characters "
+            "encoding a number below the curve order."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -258,15 +265,15 @@ def submit_commit() -> ResponseReturnValue:
     Body JSON:
       { "bidder_id": str, "bid": int }
 
-    The server computes C = SHA256(bid_bytes || randomness), stores C,
-    and returns randomness_hex to the client ONCE. The client must store it;
-    the server does NOT retain randomness_hex.
+    The server computes the Pedersen commitment C = bid·G + r·H with a random
+    blinding factor r, stores C, and returns r (as randomness_hex) to the
+    client ONCE. The client must store it; the server does NOT retain it.
 
     Response:
       {
         "success":        bool,
-        "commitment_hex": str,   -- public
-        "randomness_hex": str,   -- PRIVATE — store locally, never resend unnecessarily
+        "commitment_hex": str,   -- public; compressed point, 66 hex chars
+        "randomness_hex": str,   -- PRIVATE blinding factor r, 64 hex chars
         "phase":          str
       }
     """
@@ -281,8 +288,8 @@ def submit_commit() -> ResponseReturnValue:
     return jsonify(
         {
             "success": True,
-            "commitment_hex": c.commitment_hex,
-            "randomness_hex": c.randomness_hex,  # returned once; server does not store it
+            "commitment_hex": encode_point(c.point),
+            "randomness_hex": encode_scalar(c.blinding),  # returned once; not stored
             "phase": result.phase.value,
             "message": result.message,
         }
@@ -302,15 +309,15 @@ def submit_prove() -> ResponseReturnValue:
     Body JSON:
       { "bidder_id": str, "bid": int, "randomness_hex": str }
 
-    The server generates the range proof using the private (bid, randomness)
-    sent by the client, verifies it, and records the result.
+    The server generates the range proof using the private (bid, blinding
+    factor) sent by the client, verifies it, and records the result.
     After this call the server discards the private values.
 
     Response:
       {
         "success":      bool,
         "proof_valid":  bool,
-        "proof_public": { ... RangeProof fields ... },
+        "proof_public": { "low": {...}, "high": {...} },  -- RangeProof.to_dict()
         "phase":        str
       }
     """
@@ -319,9 +326,9 @@ def submit_prove() -> ResponseReturnValue:
     data = _json_object()
     bidder_id = _str_field(data, "bidder_id")
     bid = _int_field(data, "bid")
-    randomness_hex = _randomness_field(data)
+    blinding = _blinding_field(data)
 
-    proof, result = service.prove(bidder_id, bid, randomness_hex)
+    proof, result = service.prove(bidder_id, bid, blinding)
 
     return jsonify(
         {
@@ -342,7 +349,7 @@ def submit_prove() -> ResponseReturnValue:
 @bp.post("/reveal")
 def submit_reveal() -> ResponseReturnValue:
     """
-    Reveal a bidder's (bid, randomness) and verify against their commitment.
+    Reveal a bidder's (bid, blinding factor) and verify against their commitment.
 
     Body JSON:
       { "bidder_id": str, "bid": int, "randomness_hex": str }
@@ -360,9 +367,9 @@ def submit_reveal() -> ResponseReturnValue:
     data = _json_object()
     bidder_id = _str_field(data, "bidder_id")
     bid = _int_field(data, "bid")
-    randomness_hex = _randomness_field(data)
+    blinding = _blinding_field(data)
 
-    result = service.reveal(bidder_id, bid, randomness_hex)
+    result = service.reveal(bidder_id, bid, blinding)
 
     return jsonify(
         {
