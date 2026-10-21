@@ -138,6 +138,7 @@ crypto-auction/
 │       ├── __init__.py
 │       ├── commitment.py     # SHA-256 commitment scheme
 │       ├── pedersen.py       # Pedersen commitments on secp256k1 (replacing commitment.py)
+│       ├── bit_proof.py      # ZK OR-proof that a Pedersen commitment hides 0 or 1
 │       ├── zkp.py            # Range proof (Sigma + Fiat-Shamir), currently unsound
 │       ├── auction.py        # State machine + auction logic
 │       ├── service.py        # Runs one auction and the server's protocol steps
@@ -154,6 +155,7 @@ crypto-auction/
 │   ├── support.py            # Shared helpers (known_bug marker, proof forger)
 │   ├── test_commitment.py    # Commitment scheme
 │   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
+│   ├── test_bit_proof.py     # Bit proof: completeness, soundness, binding
 │   ├── test_zkp.py           # Range proof, incl. soundness
 │   ├── test_auction.py       # State machine and winner selection
 │   ├── test_api.py           # REST API via Flask's test client
