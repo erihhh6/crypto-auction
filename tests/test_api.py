@@ -266,6 +266,13 @@ class TestProve(ApiTestCase):
         opening = {**secrets["bidder_0"], "bid": "lots"}
         self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **opening))
 
+    def test_rejects_opening_that_does_not_match_the_commitment(self):
+        secrets = self.commit_all()
+        wrong_randomness = {**secrets["bidder_0"], "randomness_hex": "ab" * 32}
+        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **wrong_randomness))
+        wrong_bid = {**secrets["bidder_1"], "bid": 4999}
+        self.assert_error(self.post("/api/prove", bidder_id="bidder_1", **wrong_bid))
+
     def test_rejects_claimed_bid_outside_the_range(self):
         secrets = self.commit_all()
         opening = {**secrets["bidder_0"], "bid": 99_999}

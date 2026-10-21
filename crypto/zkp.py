@@ -27,14 +27,20 @@ without learning either the bid or the gap values.
 **Security Note**
 
 This is a simplified Sigma-style construction, not a full Bulletproof or Groth16 SNARK.
-It provides computational soundness under the random oracle model (ROM) for the hash
-function, which is sufficient for a portfolio demonstration of the protocol pattern.
+It is NOT sound: nothing links C_low/C_high to the committed bid, so a proof can be
+forged without knowing it (see TestSoundness in tests/test_zkp.py). It is kept only
+until it is replaced by Pedersen commitments with a bit-decomposition range proof.
 """
 
 import hashlib
 import os
 import struct
 from dataclasses import dataclass
+
+try:
+    from crypto.commitment import verify as verify_commitment
+except ImportError:
+    from commitment import verify as verify_commitment  # when run directly
 
 
 @dataclass
@@ -99,12 +105,17 @@ def prove_range(
         A RangeProof containing all public proof elements.
 
     Raises:
-        ValueError: If bid is not within [min_bid, max_bid].
+        ValueError: If bid is not within [min_bid, max_bid], or if
+            (bid, randomness_hex) does not open commitment_hex.
     """
     if not (min_bid <= bid <= max_bid):
         raise ValueError(
             f"Bid {bid} is not within [{min_bid}, {max_bid}]. Cannot generate a valid range proof."
         )
+    # Refuse to prove anything about a commitment the prover cannot open:
+    # otherwise the proof would vouch for a bid that was never committed.
+    if not verify_commitment(bid, randomness_hex, commitment_hex):
+        raise ValueError("(bid, randomness) does not open the given commitment.")
 
     r = bytes.fromhex(randomness_hex)
     r_int = int.from_bytes(r, "big")

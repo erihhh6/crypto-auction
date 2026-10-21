@@ -118,7 +118,6 @@ class TestSoundness(unittest.TestCase):
         c = commit(999_999)  # far outside [100, 5000]; the forger never uses the opening
         self.assertFalse(verify_range_proof(forged_range_proof(c.commitment_hex, 100, 5000)))
 
-    @known_bug("prove_range never checks that (bid, randomness) opens the commitment")
     def test_prover_rejects_an_opening_that_does_not_match(self):
         c = commit(1000)
         with self.assertRaises(ValueError):

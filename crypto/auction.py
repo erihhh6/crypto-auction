@@ -136,6 +136,9 @@ class Auction:
         """
         Receive and verify a ZK range proof from a bidder.
 
+        The proof must be about this bidder's commitment and this auction's
+        [min_bid, max_bid]; a proof of any other statement is recorded as invalid.
+
         Allowed in states COMMITTED and PROVED.
         Advances to PROVED once all proofs are received and valid.
 
@@ -164,7 +167,9 @@ class Auction:
         if bidder.proof_valid is not None:
             raise ValueError(f"Bidder '{bidder.name}' has already submitted a proof.")
 
-        # Deserialise and verify
+        # Deserialise and verify. The statement (commitment and range) must come
+        # from the auction, not from the proof: an otherwise valid proof of a
+        # different statement says nothing about this bidder's bid.
         try:
             proof = RangeProof(
                 commitment_hex=proof_data["commitment_hex"],
@@ -177,7 +182,12 @@ class Auction:
                 high_challenge_hex=proof_data["high_challenge_hex"],
                 high_response=proof_data["high_response"],
             )
-            is_valid = verify_range_proof(proof)
+            is_valid = (
+                proof.commitment_hex == bidder.commitment_hex
+                and proof.min_bid == self.config.min_bid
+                and proof.max_bid == self.config.max_bid
+                and verify_range_proof(proof)
+            )
         except (KeyError, TypeError, ValueError):
             is_valid = False
 

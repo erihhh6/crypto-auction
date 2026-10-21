@@ -143,19 +143,20 @@ class TestPhase2Prove(unittest.TestCase):
         result = auction.submit_proof("bidder_0", {"bad": "data"})
         self.assertFalse(result["proof_valid"])
 
-    @known_bug("submit_proof never checks that the proof is about this bidder's commitment")
     def test_proof_for_another_commitment_is_invalid(self):
         auction, _ = self._committed_auction()
         other = commit(2000)
         pd = _proof_dict(2000, other.randomness_hex, other.commitment_hex, 100, 5000)
         self.assertFalse(auction.submit_proof("bidder_0", pd)["proof_valid"])
 
-    @known_bug("submit_proof never checks that the proof's range is the auction's range")
     def test_proof_for_another_range_is_invalid(self):
         auction, secrets = self._committed_auction()
-        s = secrets["bidder_0"]
-        pd = _proof_dict(s["bid"], s["randomness_hex"], s["commitment_hex"], 0, 10**9)
-        self.assertFalse(auction.submit_proof("bidder_0", pd)["proof_valid"])
+        # One bound differs per case, each on its own bidder, so a missing check
+        # on either bound is caught on its own.
+        for bidder_id, bounds in (("bidder_0", (0, 5000)), ("bidder_1", (100, 10**9))):
+            s = secrets[bidder_id]
+            pd = _proof_dict(s["bid"], s["randomness_hex"], s["commitment_hex"], *bounds)
+            self.assertFalse(auction.submit_proof(bidder_id, pd)["proof_valid"], bounds)
 
 
 class TestPhase3Reveal(unittest.TestCase):
