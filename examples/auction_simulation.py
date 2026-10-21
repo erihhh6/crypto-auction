@@ -1,7 +1,7 @@
 """Run a full three-bidder auction (commit, prove, reveal) without the web app."""
 
 from crypto_auction.auction import Auction, AuctionConfig
-from crypto_auction.commitment import commit
+from crypto_auction.commitment import Commitment, commit
 from crypto_auction.zkp import prove_range
 
 
@@ -22,42 +22,37 @@ def main() -> None:
         "bidder_2": ("Carol", 1500),
     }
 
-    # Store secrets keyed by bidder_id (simulating what each bidder holds locally)
-    secrets: dict = {}
+    # What each bidder keeps locally: their commitment and its opening.
+    secrets: dict[str, Commitment] = {}
 
     print("--- PHASE 1: COMMIT ---")
     for bidder_id, (name, bid) in bids.items():
         c = commit(bid)
-        secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex}
-        result = auction.submit_commitment(bidder_id, c.commitment_hex)
-        print(f"  {name}: commitment={c.commitment_hex[:16]}...  -> phase={result.phase.value}")
+        secrets[bidder_id] = c
+        committed = auction.submit_commitment(bidder_id, c.commitment_hex)
+        print(f"  {name}: commitment={c.commitment_hex[:16]}...  -> phase={committed.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
     print("\n--- PHASE 2: ZK PROVE ---")
     for bidder_id, (name, bid) in bids.items():
-        s = secrets[bidder_id]
-        # The bidder retrieves their own commitment from public state
-        commitment_hex = auction.bidders[bidder_id].commitment_hex
-        proof = prove_range(
-            bid, s["randomness_hex"], commitment_hex, config.min_bid, config.max_bid
-        )
-        result = auction.submit_proof(bidder_id, proof.to_dict())
-        print(f"  {name}: proof_valid={result.proof_valid}  -> phase={result.phase.value}")
+        c = secrets[bidder_id]
+        proof = prove_range(bid, c.randomness_hex, c.commitment_hex, config.min_bid, config.max_bid)
+        proved = auction.submit_proof(bidder_id, proof.to_dict())
+        print(f"  {name}: proof_valid={proved.proof_valid}  -> phase={proved.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
     print("\n--- PHASE 3: REVEAL ---")
-    for bidder_id, (name, _) in bids.items():
-        s = secrets[bidder_id]
-        result = auction.submit_reveal(bidder_id, s["bid"], s["randomness_hex"])
-        print(
-            f"  {name}: bid={s['bid']}, verified={result.verified}  -> phase={result.phase.value}"
-        )
+    for bidder_id, (name, bid) in bids.items():
+        revealed = auction.submit_reveal(bidder_id, bid, secrets[bidder_id].randomness_hex)
+        print(f"  {name}: bid={bid}, verified={revealed.verified}  -> phase={revealed.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
     winner = auction.get_winner()
+    if winner is None:
+        raise SystemExit("No eligible bidder: the auction has no winner.")
     print(f"\n=== WINNER: {winner.name} with bid {winner.bid} ===")
 
     public = auction.get_public_state()

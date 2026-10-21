@@ -1,17 +1,14 @@
-"""Tests for app.py — development server entry point."""
+"""Tests for the development server entry point (python -m crypto_auction.web)."""
 
 import os
 import runpy
 import unittest
-from pathlib import Path
 from unittest import mock
-
-APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
 def run_entry_point(**env):
     """
-    Execute app.py as __main__ with the server stubbed out.
+    Run `python -m crypto_auction.web` in-process with the server stubbed out.
 
     Returns the keyword arguments Flask passed to werkzeug's run_simple,
     which is where the debugger and reloader are switched on or off.
@@ -22,7 +19,7 @@ def run_entry_point(**env):
     ):
         if "FLASK_DEBUG" not in env:
             os.environ.pop("FLASK_DEBUG", None)
-        runpy.run_path(str(APP_PATH), run_name="__main__")
+        runpy.run_module("crypto_auction.web", run_name="__main__")
     return run_simple.call_args.kwargs
 
 

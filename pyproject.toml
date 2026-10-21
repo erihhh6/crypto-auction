@@ -22,6 +22,18 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The page and its assets ship inside the package, so an installed copy can
+# serve them.
+[tool.setuptools.package-data]
+"crypto_auction.web" = ["templates/*.html", "static/*.js", "static/*.css"]
+
+[tool.mypy]
+files = ["src", "examples"]
+strict = true
+# Use the pure-Python parser: the optional native parser is a separate compiled
+# binary, which Windows Smart App Control can refuse to load.
+native_parser = false
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"  # oldest Python in the CI matrix
@@ -51,8 +63,8 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 branch = true
 # Measure the project directory and the package rather than named modules, so
-# a module no test imports (e.g. app.py) is reported as 0% instead of silently
-# dropped. `source` alone would not look inside src/, which has no __init__.py.
+# a module no test imports is reported as 0% instead of silently dropped.
+# `source` alone would not look inside src/, which has no __init__.py.
 source = ["."]
 source_pkgs = ["crypto_auction"]
 omit = ["tests/*"]

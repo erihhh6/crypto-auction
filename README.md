@@ -85,7 +85,7 @@ performs the bidder's steps in phases 1 and 2 (see [Limitations](#limitations)).
 
 ```bash
 pip install -r requirements.txt   # installs the crypto_auction package (editable) and Flask
-python app.py
+python -m crypto_auction.web
 # Open http://localhost:5000
 ```
 
@@ -93,7 +93,7 @@ For local development with auto-reload and the interactive debugger
 (never enable this on a reachable host):
 
 ```bash
-flask --app app run --debug
+flask --app crypto_auction.web run --debug
 ```
 
 Or try the cryptographic building blocks without the web app:
@@ -104,13 +104,14 @@ python examples/range_proof_demo.py     # ZK range proof demo
 python examples/auction_simulation.py   # full 3-bidder simulation
 ```
 
-Development setup (tests, coverage, lint):
+Development setup (tests, coverage, lint, types):
 
 ```bash
 pip install -r requirements-dev.txt
 pytest --cov                # test suite with branch coverage (fails below the floor)
 ruff check .                # lint
 ruff format --check .       # formatting
+python -m mypy              # strict type check of src/ and examples/
 node --test "tests/js/*.test.mjs"   # frontend rendering tests (Node 22+, no npm install)
 ```
 
@@ -136,12 +137,15 @@ crypto-auction/
 │       ├── __init__.py
 │       ├── commitment.py     # SHA-256 commitment scheme
 │       ├── zkp.py            # Range proof (Sigma + Fiat-Shamir), currently unsound
-│       └── auction.py        # State machine + auction logic
-├── static/
-│   ├── app.js                # Frontend SPA (vanilla JS)
-│   └── style.css             # Dark theme CSS
-├── templates/
-│   └── index.html            # Single page, 3-panel layout
+│       ├── auction.py        # State machine + auction logic
+│       ├── service.py        # Runs one auction and the server's protocol steps
+│       └── web/              # Flask app: create_app(), python -m crypto_auction.web
+│           ├── api.py        # /api blueprint: routes and request validation
+│           ├── templates/
+│           │   └── index.html  # Single page, 3-panel layout
+│           └── static/
+│               ├── app.js    # Frontend SPA (vanilla JS)
+│               └── style.css # Dark theme CSS
 ├── tests/
 │   ├── js/
 │   │   └── render.test.mjs   # Frontend rendering (HTML escaping), via node --test
@@ -151,10 +155,9 @@ crypto-auction/
 │   ├── test_auction.py       # State machine and winner selection
 │   ├── test_api.py           # REST API via Flask's test client
 │   └── test_app.py           # Server entry point (debug mode)
-├── app.py                    # Flask app — all REST routes
 ├── pyproject.toml            # Package metadata and tool configuration
 ├── requirements.txt          # Installs the package and its dependencies
-└── requirements-dev.txt      # Test and lint tooling
+└── requirements-dev.txt      # Test, lint and type-check tooling
 ```
 
 ---

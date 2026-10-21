@@ -1,31 +1,23 @@
-"""Tests for the REST API in app.py, exercised through Flask's test client."""
+"""Tests for the REST API (crypto_auction.web), exercised through Flask's test client."""
 
 import unittest
 from unittest import mock
 
-import app as app_module
 from crypto_auction.auction import Auction
 from crypto_auction.commitment import verify
+from crypto_auction.web import create_app
+from crypto_auction.web.api import MAX_NAME_LENGTH
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
 
 
 class ApiTestCase(unittest.TestCase):
-    """Gives every test a test client and an empty auction slot."""
+    """Gives every test its own app, and so its own empty auction."""
 
     def setUp(self):
-        # app.py keeps the auction in a module-level global; patching it gives
-        # each test a clean slate and restores the previous value afterwards.
-        patches = [
-            mock.patch.object(app_module, "auction", None),
-            # Let unhandled exceptions propagate instead of becoming HTTP 500s.
-            mock.patch.dict(app_module.app.config, {"TESTING": True}),
-        ]
-        for patcher in patches:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-        self.client = app_module.app.test_client()
+        # TESTING lets unhandled exceptions propagate instead of becoming 500s.
+        self.client = create_app({"TESTING": True}).test_client()
 
     def post(self, path, **body):
         return self.client.post(path, json=body)
@@ -172,7 +164,7 @@ class TestCreate(ApiTestCase):
         self.assert_error(self.create(bidders=["Alice", "ALICE"]))
 
     def test_name_length_limit(self):
-        longest = "x" * app_module.MAX_NAME_LENGTH
+        longest = "x" * MAX_NAME_LENGTH
         self.assert_ok(self.create(item_name=longest, bidders=[longest, "Bob"]))
         self.assert_error(self.create(item_name=longest + "x"))
         self.assert_error(self.create(bidders=[longest + "x", "Bob"]))
@@ -402,14 +394,20 @@ class TestRequestFormat(ApiTestCase):
         self.assertIn("POST", resp.headers["Allow"])
 
     def test_unexpected_error_gets_a_json_500_without_internals(self):
-        self.create()
         # Outside TESTING mode Flask turns an unhandled exception into a 500.
-        with (
-            mock.patch.dict(app_module.app.config, {"TESTING": False}),
-            mock.patch.object(Auction, "get_public_state", side_effect=RuntimeError("secret")),
-        ):
+        self.client = create_app().test_client()
+        self.create()
+        with mock.patch.object(Auction, "get_public_state", side_effect=RuntimeError("secret")):
             resp = self.client.get("/api/state")
         self.assertNotIn("secret", self.assert_error(resp, 500)["error"])
+
+
+class TestAppFactory(ApiTestCase):
+    def test_each_app_has_its_own_auction(self):
+        self.assert_ok(self.create())
+        other = create_app({"TESTING": True}).test_client()
+        self.assert_error(other.get("/api/state"), 404)
+        self.assert_ok(self.client.get("/api/state"))
 
 
 class TestReset(ApiTestCase):

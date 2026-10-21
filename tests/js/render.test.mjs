@@ -1,4 +1,5 @@
-// Rendering tests for static/app.js, run with Node's built-in test runner:
+// Rendering tests for the frontend script (src/crypto_auction/web/static/app.js),
+// run with Node's built-in test runner:
 //   node --test tests/js/
 //
 // app.js is a plain browser script that only touches the DOM when its
@@ -10,7 +11,10 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
-const APP_JS = readFileSync(new URL("../../static/app.js", import.meta.url), "utf8");
+const APP_JS = readFileSync(
+  new URL("../../src/crypto_auction/web/static/app.js", import.meta.url),
+  "utf8",
+);
 
 // Accepted by the API as a bidder or item name (a non-blank string).
 const PAYLOAD = '<img src=x onerror="alert(1)">';

@@ -37,14 +37,14 @@ import os
 import re
 import struct
 from dataclasses import dataclass
-from typing import Self
+from typing import Any, Self
 
 from crypto_auction.commitment import verify as verify_commitment
 
 _HEX_INT = re.compile(r"[0-9a-f]+")
 
 
-def _hex_to_int(value) -> int:
+def _hex_to_int(value: object) -> int:
     # int(value, 16) alone would also accept "0x1f", "-1f", "1_f" and padding
     # whitespace; only the plain lowercase hex that to_dict() emits is valid.
     if not isinstance(value, str) or not _HEX_INT.fullmatch(value):
@@ -73,7 +73,7 @@ class RangeProof:
     high_challenge_hex: str  # e_high = H(C || C_high)
     high_response: int  # z_high = r_high_int + e_high * r_int
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """
         Serialise the proof for JSON.
 
@@ -94,7 +94,7 @@ class RangeProof:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Self:
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """
         Parse a proof serialised by to_dict().
 

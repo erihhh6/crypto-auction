@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint and format
+    name: Lint, format and type check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -44,6 +44,10 @@ jobs:
 
       - name: Check formatting
         run: ruff format --check --diff .
+
+      # Strict mode over src/ and examples/; settings live in pyproject.toml.
+      - name: Type check
+        run: python -m mypy
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

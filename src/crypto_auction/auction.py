@@ -20,6 +20,7 @@ receives bids in plaintext (see README).
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+from typing import Any
 
 from crypto_auction.commitment import verify as verify_commitment
 from crypto_auction.zkp import RangeProof, verify_range_proof
@@ -42,7 +43,7 @@ class BidderState:
     commitment_hex: str | None = None
     commit_order: int | None = None  # 0 for the first commitment received, 1 next, ...
     # Phase 2 — public after prove
-    range_proof: dict | None = None  # RangeProof serialised as dict
+    range_proof: dict[str, Any] | None = None  # RangeProof serialised as dict
     proof_valid: bool | None = None
     # Phase 3 — public after reveal
     revealed_bid: int | None = None
@@ -67,7 +68,7 @@ class Winner:
     bid: int
     commitment_hex: str
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -160,7 +161,7 @@ class Auction:
     # Phase 2 — ZK Range Proof
     # ------------------------------------------------------------------
 
-    def submit_proof(self, bidder_id: str, proof_data: dict) -> ProofResult:
+    def submit_proof(self, bidder_id: str, proof_data: dict[str, Any]) -> ProofResult:
         """
         Receive and verify a ZK range proof from a bidder.
 
@@ -254,7 +255,9 @@ class Auction:
             raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
 
         bidder = self.bidders[bidder_id]
-        if bidder.proof_valid is None:
+        # A proof implies a commitment; checking both lets the type checker
+        # see that commitment_hex is set below.
+        if bidder.commitment_hex is None or bidder.proof_valid is None:
             raise ValueError(f"Bidder '{bidder.name}' has not submitted a ZK proof yet.")
         if bidder.revealed_bid is not None:
             raise ValueError(
@@ -291,7 +294,7 @@ class Auction:
     # Queries
     # ------------------------------------------------------------------
 
-    def get_public_state(self) -> dict:
+    def get_public_state(self) -> dict[str, Any]:
         """
         Return the complete public state visible to all participants.
 
@@ -347,26 +350,25 @@ class Auction:
         # revealed bid is the committed one. The range is checked again on the
         # revealed bid as defence in depth: the current range proof can be
         # forged, and once a bid is revealed the check costs nothing.
-        eligible = [
-            b
+        # A verified bidder always has a commitment and a commit order; the
+        # explicit checks let the type checker see that too.
+        candidates = [
+            (b.commit_order, Winner(b.bidder_id, b.name, b.revealed_bid, b.commitment_hex))
             for b in self.bidders.values()
             if b.proof_valid is True
             and b.commitment_verified is True
             and b.revealed_bid is not None
+            and b.commitment_hex is not None
+            and b.commit_order is not None
             and self._in_range(b.revealed_bid)
         ]
 
-        if not eligible:
+        if not candidates:
             return None
 
         # Highest bid first; among equal bids, the earliest commitment.
-        best = min(eligible, key=lambda b: (-b.revealed_bid, b.commit_order))
-        return Winner(
-            bidder_id=best.bidder_id,
-            name=best.name,
-            bid=best.revealed_bid,
-            commitment_hex=best.commitment_hex,
-        )
+        _, winner = min(candidates, key=lambda c: (-c[1].bid, c[0]))
+        return winner
 
     def _in_range(self, bid: int) -> bool:
         return self.config.min_bid <= bid <= self.config.max_bid
