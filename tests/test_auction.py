@@ -1,16 +1,18 @@
 """Tests for crypto/auction.py — state machine and auction logic."""
 
 import unittest
+
+from crypto.auction import Auction, AuctionConfig, AuctionState
 from crypto.commitment import commit
 from crypto.zkp import prove_range
-from crypto.auction import Auction, AuctionConfig, AuctionState
 
 
 def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
     if bidder_names is None:
         bidder_names = ["Alice", "Bob", "Carol"]
-    config = AuctionConfig(min_bid=min_bid, max_bid=max_bid,
-                           item_name="Test Item", bidder_names=bidder_names)
+    config = AuctionConfig(
+        min_bid=min_bid, max_bid=max_bid, item_name="Test Item", bidder_names=bidder_names
+    )
     return Auction(config)
 
 
@@ -18,7 +20,8 @@ def _proof_dict(bid, randomness_hex, commitment_hex, min_bid, max_bid):
     proof = prove_range(bid, randomness_hex, commitment_hex, min_bid, max_bid)
     return {
         "commitment_hex": proof.commitment_hex,
-        "min_bid": proof.min_bid, "max_bid": proof.max_bid,
+        "min_bid": proof.min_bid,
+        "max_bid": proof.max_bid,
         "low_commitment_hex": proof.low_commitment_hex,
         "low_challenge_hex": proof.low_challenge_hex,
         "low_response": proof.low_response,
@@ -37,8 +40,11 @@ def run_full_auction(bids_map, min_bid=100, max_bid=5000):
     for bidder_id, b in auction.bidders.items():
         bid = bids_map[b.name]
         c = commit(bid)
-        secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex,
-                               "commitment_hex": c.commitment_hex}
+        secrets[bidder_id] = {
+            "bid": bid,
+            "randomness_hex": c.randomness_hex,
+            "commitment_hex": c.commitment_hex,
+        }
         auction.submit_commitment(bidder_id, c.commitment_hex)
 
     for bidder_id, s in secrets.items():
@@ -52,7 +58,6 @@ def run_full_auction(bids_map, min_bid=100, max_bid=5000):
 
 
 class TestAuctionInit(unittest.TestCase):
-
     def test_initial_state_is_open(self):
         auction = make_auction()
         self.assertEqual(auction.state, AuctionState.OPEN)
@@ -69,7 +74,6 @@ class TestAuctionInit(unittest.TestCase):
 
 
 class TestPhase1Commit(unittest.TestCase):
-
     def test_commit_advances_to_committed_when_all_done(self):
         auction = make_auction(["Alice", "Bob"])
         c0 = commit(1000)
@@ -98,15 +102,17 @@ class TestPhase1Commit(unittest.TestCase):
 
 
 class TestPhase2Prove(unittest.TestCase):
-
     def _committed_auction(self):
         auction = make_auction(["Alice", "Bob"])
         secrets = {}
         for bidder_id, b in auction.bidders.items():
             bid = 1000 if b.name == "Alice" else 2000
             c = commit(bid)
-            secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex,
-                                   "commitment_hex": c.commitment_hex}
+            secrets[bidder_id] = {
+                "bid": bid,
+                "randomness_hex": c.randomness_hex,
+                "commitment_hex": c.commitment_hex,
+            }
             auction.submit_commitment(bidder_id, c.commitment_hex)
         return auction, secrets
 
@@ -131,13 +137,12 @@ class TestPhase2Prove(unittest.TestCase):
             auction.submit_proof("bidder_0", pd)
 
     def test_invalid_proof_dict_marks_invalid(self):
-        auction, secrets = self._committed_auction()
+        auction, _ = self._committed_auction()
         result = auction.submit_proof("bidder_0", {"bad": "data"})
         self.assertFalse(result["proof_valid"])
 
 
 class TestPhase3Reveal(unittest.TestCase):
-
     def test_highest_bid_wins(self):
         auction = run_full_auction({"Alice": 1200, "Bob": 1800, "Carol": 1500})
         winner = auction.get_winner()
@@ -154,8 +159,11 @@ class TestPhase3Reveal(unittest.TestCase):
         for bidder_id, b in auction.bidders.items():
             bid = 1000 if b.name == "Alice" else 500
             c = commit(bid)
-            secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex,
-                                   "commitment_hex": c.commitment_hex}
+            secrets[bidder_id] = {
+                "bid": bid,
+                "randomness_hex": c.randomness_hex,
+                "commitment_hex": c.commitment_hex,
+            }
             auction.submit_commitment(bidder_id, c.commitment_hex)
 
         for bidder_id, s in secrets.items():
@@ -176,11 +184,14 @@ class TestPhase3Reveal(unittest.TestCase):
     def test_double_reveal_raises(self):
         auction = make_auction(["Alice", "Bob"], 100, 5000)
         secrets = {}
-        for bidder_id, b in auction.bidders.items():
+        for bidder_id in auction.bidders:
             bid = 1000
             c = commit(bid)
-            secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex,
-                                   "commitment_hex": c.commitment_hex}
+            secrets[bidder_id] = {
+                "bid": bid,
+                "randomness_hex": c.randomness_hex,
+                "commitment_hex": c.commitment_hex,
+            }
             auction.submit_commitment(bidder_id, c.commitment_hex)
         for bidder_id, s in secrets.items():
             pd = _proof_dict(s["bid"], s["randomness_hex"], s["commitment_hex"], 100, 5000)
@@ -204,7 +215,6 @@ class TestPhase3Reveal(unittest.TestCase):
 
 
 class TestPublicState(unittest.TestCase):
-
     def test_bids_hidden_before_reveal(self):
         auction = make_auction(["Alice", "Bob"], 100, 5000)
         for bidder_id in auction.bidders:

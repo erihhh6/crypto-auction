@@ -1,12 +1,12 @@
 """Tests for crypto/zkp.py"""
 
 import unittest
+
 from crypto.commitment import commit
-from crypto.zkp import RangeProof, prove_range, verify_range_proof, _fiat_shamir_challenge
+from crypto.zkp import _fiat_shamir_challenge, prove_range, verify_range_proof
 
 
 class TestFiatShamirChallenge(unittest.TestCase):
-
     def test_returns_32_bytes(self):
         result = _fiat_shamir_challenge(b"hello", b"world")
         self.assertEqual(len(result), 32)
@@ -23,7 +23,6 @@ class TestFiatShamirChallenge(unittest.TestCase):
 
 
 class TestProveRange(unittest.TestCase):
-
     def _make_proof(self, bid, min_bid=100, max_bid=5000):
         c = commit(bid)
         return prove_range(bid, c.randomness_hex, c.commitment_hex, min_bid, max_bid), c
@@ -75,7 +74,6 @@ class TestProveRange(unittest.TestCase):
 
 
 class TestVerifyRangeProof(unittest.TestCase):
-
     def _valid_proof(self):
         c = commit(1500)
         return prove_range(1500, c.randomness_hex, c.commitment_hex, 100, 5000)

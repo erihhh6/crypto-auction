@@ -117,17 +117,19 @@ if __name__ == "__main__":
     c = commit(bid_value)
     print(f"Bid: {bid_value}")
     print(f"Commitment (public): {c.commitment_hex}")
-    print(f"Randomness (private): {c.randomness_hex[:16]}...  ({len(c.randomness_hex)//2} bytes)")
+    print(f"Randomness (private): {c.randomness_hex[:16]}...  ({len(c.randomness_hex) // 2} bytes)")
 
     # 2. Verify with correct values → True
     result_correct = verify(bid_value, c.randomness_hex, c.commitment_hex)
     print(f"\nVerify(bid=1500, correct randomness) -> {result_correct}")
-    assert result_correct is True, "Correct verification should return True"
+    if result_correct is not True:
+        raise SystemExit("Correct verification should return True")
 
     # 3. Verify with wrong bid -> False
     result_wrong_bid = verify(9999, c.randomness_hex, c.commitment_hex)
     print(f"Verify(bid=9999, correct randomness) -> {result_wrong_bid}")
-    assert result_wrong_bid is False, "Wrong bid should return False"
+    if result_wrong_bid is not False:
+        raise SystemExit("Wrong bid should return False")
 
     # 4. Two commits to the same bid produce different commitments (hiding / IND-CPA)
     c2 = commit(bid_value)
@@ -135,6 +137,7 @@ if __name__ == "__main__":
     print(f"  C1 = {c.commitment_hex}")
     print(f"  C2 = {c2.commitment_hex}")
     print(f"  Are different: {c.commitment_hex != c2.commitment_hex}")
-    assert c.commitment_hex != c2.commitment_hex, "Two commits should differ (hiding)"
+    if c.commitment_hex == c2.commitment_hex:
+        raise SystemExit("Two commits should differ (hiding)")
 
-    print("\nAll assertions passed.")
+    print("\nAll checks passed.")

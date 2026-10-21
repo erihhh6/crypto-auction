@@ -26,7 +26,7 @@ from flask import Flask, jsonify, render_template, request
 
 from crypto.auction import Auction, AuctionConfig
 from crypto.commitment import commit
-from crypto.zkp import RangeProof, prove_range
+from crypto.zkp import prove_range
 
 app = Flask(__name__)
 
@@ -38,6 +38,7 @@ auction: Auction | None = None
 # HTML
 # ---------------------------------------------------------------------------
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -46,6 +47,7 @@ def index():
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/create", methods=["POST"])
 def create_auction():
@@ -97,23 +99,23 @@ def create_auction():
     )
     auction = Auction(config)
 
-    bidders_info = [
-        {"bidder_id": bid_id, "name": b.name}
-        for bid_id, b in auction.bidders.items()
-    ]
+    bidders_info = [{"bidder_id": bid_id, "name": b.name} for bid_id, b in auction.bidders.items()]
 
-    return jsonify({
-        "success": True,
-        "item_name": item_name,
-        "min_bid": min_bid,
-        "max_bid": max_bid,
-        "bidders": bidders_info,
-    })
+    return jsonify(
+        {
+            "success": True,
+            "item_name": item_name,
+            "min_bid": min_bid,
+            "max_bid": max_bid,
+            "bidders": bidders_info,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/state", methods=["GET"])
 def get_state():
@@ -129,6 +131,7 @@ def get_state():
 # ---------------------------------------------------------------------------
 # Commit (Phase 1)
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/commit", methods=["POST"])
 def submit_commit():
@@ -161,13 +164,15 @@ def submit_commit():
         return jsonify({"success": False, "error": str(exc)}), 400
 
     if bid < auction.config.min_bid or bid > auction.config.max_bid:
-        return jsonify({
-            "success": False,
-            "error": (
-                f"Bid {bid} is outside the allowed range "
-                f"[{auction.config.min_bid}, {auction.config.max_bid}]."
-            ),
-        }), 400
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    f"Bid {bid} is outside the allowed range "
+                    f"[{auction.config.min_bid}, {auction.config.max_bid}]."
+                ),
+            }
+        ), 400
 
     try:
         c = commit(bid)
@@ -175,18 +180,21 @@ def submit_commit():
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
-    return jsonify({
-        "success": True,
-        "commitment_hex": c.commitment_hex,
-        "randomness_hex": c.randomness_hex,  # returned once; server does not store it
-        "phase": result["phase"],
-        "message": result["message"],
-    })
+    return jsonify(
+        {
+            "success": True,
+            "commitment_hex": c.commitment_hex,
+            "randomness_hex": c.randomness_hex,  # returned once; server does not store it
+            "phase": result["phase"],
+            "message": result["message"],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Prove (Phase 2)
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/prove", methods=["POST"])
 def submit_prove():
@@ -254,18 +262,21 @@ def submit_prove():
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
-    return jsonify({
-        "success": True,
-        "proof_valid": result["proof_valid"],
-        "proof_public": proof_dict,
-        "phase": result["phase"],
-        "message": result["message"],
-    })
+    return jsonify(
+        {
+            "success": True,
+            "proof_valid": result["proof_valid"],
+            "proof_public": proof_dict,
+            "phase": result["phase"],
+            "message": result["message"],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Reveal (Phase 3)
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/reveal", methods=["POST"])
 def submit_reveal():
@@ -299,18 +310,21 @@ def submit_reveal():
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
-    return jsonify({
-        "success": True,
-        "verified": result["verified"],
-        "phase": result["phase"],
-        "message": result["message"],
-        "winner": result["winner"],
-    })
+    return jsonify(
+        {
+            "success": True,
+            "verified": result["verified"],
+            "phase": result["phase"],
+            "message": result["message"],
+            "winner": result["winner"],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Reset
 # ---------------------------------------------------------------------------
+
 
 @app.route("/api/reset", methods=["POST"])
 def reset():

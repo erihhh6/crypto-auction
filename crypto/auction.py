@@ -17,16 +17,15 @@ The auctioneer sees only commitments and ZK proofs in phases 1-2,
 and learns actual bid values only in phase 3.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 try:
     from crypto.commitment import verify as verify_commitment
-    from crypto.zkp import RangeProof, prove_range, verify_range_proof
+    from crypto.zkp import RangeProof, verify_range_proof
 except ImportError:
-    from commitment import verify as verify_commitment   # when run directly
-    from zkp import RangeProof, prove_range, verify_range_proof
+    from commitment import verify as verify_commitment  # when run directly
+    from zkp import RangeProof, verify_range_proof
 
 
 class AuctionState(Enum):
@@ -44,14 +43,14 @@ class BidderState:
     bidder_id: str
     name: str
     # Phase 1 — public after commit
-    commitment_hex: Optional[str] = None
+    commitment_hex: str | None = None
     # Phase 2 — public after prove
-    range_proof: Optional[dict] = None   # RangeProof serialised as dict
-    proof_valid: Optional[bool] = None
+    range_proof: dict | None = None  # RangeProof serialised as dict
+    proof_valid: bool | None = None
     # Phase 3 — public after reveal
-    revealed_bid: Optional[int] = None
-    randomness_hex: Optional[str] = None  # becomes public at reveal
-    commitment_verified: Optional[bool] = None
+    revealed_bid: int | None = None
+    randomness_hex: str | None = None  # becomes public at reveal
+    commitment_verified: bool | None = None
 
 
 @dataclass
@@ -163,9 +162,7 @@ class Auction:
                 f"Bidder '{bidder.name}' has not committed yet. Submit commitment first."
             )
         if bidder.proof_valid is not None:
-            raise ValueError(
-                f"Bidder '{bidder.name}' has already submitted a proof."
-            )
+            raise ValueError(f"Bidder '{bidder.name}' has already submitted a proof.")
 
         # Deserialise and verify
         try:
@@ -195,18 +192,14 @@ class Auction:
             "proof_valid": is_valid,
             "phase": self.state.value,
             "bidder_id": bidder_id,
-            "message": (
-                f"{bidder.name}'s proof is {'valid' if is_valid else 'INVALID'}."
-            ),
+            "message": f"{bidder.name}'s proof is {'valid' if is_valid else 'INVALID'}.",
         }
 
     # ------------------------------------------------------------------
     # Phase 3 — Reveal
     # ------------------------------------------------------------------
 
-    def submit_reveal(
-        self, bidder_id: str, bid: int, randomness_hex: str
-    ) -> dict:
+    def submit_reveal(self, bidder_id: str, bid: int, randomness_hex: str) -> dict:
         """
         Accept a bidder's reveal of (bid, randomness) and verify against commitment.
 
@@ -235,9 +228,7 @@ class Auction:
 
         bidder = self.bidders[bidder_id]
         if bidder.proof_valid is None:
-            raise ValueError(
-                f"Bidder '{bidder.name}' has not submitted a ZK proof yet."
-            )
+            raise ValueError(f"Bidder '{bidder.name}' has not submitted a ZK proof yet.")
         if bidder.revealed_bid is not None:
             raise ValueError(
                 f"Bidder '{bidder.name}' has already revealed. Duplicate reveal is not allowed."
@@ -301,7 +292,7 @@ class Auction:
             "winner": self.get_winner(),
         }
 
-    def get_winner(self) -> Optional[dict]:
+    def get_winner(self) -> dict | None:
         """
         Determine and return the auction winner.
 
@@ -318,7 +309,8 @@ class Auction:
 
         # Only consider bidders with verified commitments
         verified = [
-            b for b in self.bidders.values()
+            b
+            for b in self.bidders.values()
             if b.commitment_verified is True and b.revealed_bid is not None
         ]
 
@@ -353,7 +345,9 @@ class Auction:
 
 
 if __name__ == "__main__":
-    import sys, os as _os
+    import os as _os
+    import sys
+
     sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
     from crypto.commitment import commit
     from crypto.zkp import prove_range
@@ -391,7 +385,9 @@ if __name__ == "__main__":
         s = secrets[bidder_id]
         # The bidder retrieves their own commitment from public state
         commitment_hex = auction.bidders[bidder_id].commitment_hex
-        proof = prove_range(bid, s["randomness_hex"], commitment_hex, config.min_bid, config.max_bid)
+        proof = prove_range(
+            bid, s["randomness_hex"], commitment_hex, config.min_bid, config.max_bid
+        )
         proof_dict = {
             "commitment_hex": proof.commitment_hex,
             "min_bid": proof.min_bid,
@@ -409,7 +405,7 @@ if __name__ == "__main__":
     print(f"\nAuction state: {auction.state.value}")
 
     print("\n--- PHASE 3: REVEAL ---")
-    for bidder_id, (name, bid) in bids.items():
+    for bidder_id, (name, _) in bids.items():
         s = secrets[bidder_id]
         result = auction.submit_reveal(bidder_id, s["bid"], s["randomness_hex"])
         print(

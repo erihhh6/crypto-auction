@@ -36,11 +36,6 @@ import os
 import struct
 from dataclasses import dataclass
 
-try:
-    from crypto.commitment import Commitment
-except ImportError:
-    from commitment import Commitment  # when run directly as python crypto/zkp.py
-
 
 @dataclass
 class RangeProof:
@@ -51,17 +46,17 @@ class RangeProof:
     The bid and original randomness remain private to the bidder.
     """
 
-    commitment_hex: str       # C = SHA256(bid || r) — original commitment
+    commitment_hex: str  # C = SHA256(bid || r) — original commitment
     min_bid: int
     max_bid: int
     # Proof that (bid - min_bid) >= 0
-    low_commitment_hex: str   # C_low = SHA256((bid-min) || r_low)
-    low_challenge_hex: str    # e_low = H(C || C_low)
-    low_response: int         # z_low = r_low_int + e_low * r_int
+    low_commitment_hex: str  # C_low = SHA256((bid-min) || r_low)
+    low_challenge_hex: str  # e_low = H(C || C_low)
+    low_response: int  # z_low = r_low_int + e_low * r_int
     # Proof that (max_bid - bid) >= 0
     high_commitment_hex: str  # C_high = SHA256((max-bid) || r_high)
-    high_challenge_hex: str   # e_high = H(C || C_high)
-    high_response: int        # z_high = r_high_int + e_high * r_int
+    high_challenge_hex: str  # e_high = H(C || C_high)
+    high_response: int  # z_high = r_high_int + e_high * r_int
 
 
 def _fiat_shamir_challenge(*elements: bytes) -> bytes:
@@ -108,8 +103,7 @@ def prove_range(
     """
     if not (min_bid <= bid <= max_bid):
         raise ValueError(
-            f"Bid {bid} is not within [{min_bid}, {max_bid}]. "
-            "Cannot generate a valid range proof."
+            f"Bid {bid} is not within [{min_bid}, {max_bid}]. Cannot generate a valid range proof."
         )
 
     r = bytes.fromhex(randomness_hex)
@@ -191,16 +185,15 @@ def verify_range_proof(proof: RangeProof) -> bool:
             return False
 
         # Verify responses are non-negative (witnesses to non-negative gap values)
-        if proof.low_response < 0 or proof.high_response < 0:
-            return False
-
-        return True
+        return not (proof.low_response < 0 or proof.high_response < 0)
     except (ValueError, Exception):
         return False
 
 
 if __name__ == "__main__":
-    import sys, os as _os
+    import os as _os
+    import sys
+
     sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
     from crypto.commitment import commit
 
@@ -216,12 +209,13 @@ if __name__ == "__main__":
 
     # 2. Generate range proof
     proof = prove_range(bid_value, c.randomness_hex, c.commitment_hex, min_b, max_b)
-    print(f"\nRange proof generated.")
+    print("\nRange proof generated.")
 
     # 3. Verify proof → True
     valid = verify_range_proof(proof)
     print(f"Verify proof -> {valid}")
-    assert valid is True, "Valid proof should verify as True"
+    if valid is not True:
+        raise SystemExit("Valid proof should verify as True")
 
     # 4. Attempt proof with bid=50 (below min) → ValueError
     try:
@@ -242,4 +236,4 @@ if __name__ == "__main__":
     print(f"  high_challenge_hex:  {proof.high_challenge_hex[:16]}...")
     print(f"  high_response:       {proof.high_response}")
 
-    print("\nAll assertions passed.")
+    print("\nAll checks passed.")

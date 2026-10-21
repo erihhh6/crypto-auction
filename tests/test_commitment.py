@@ -1,11 +1,11 @@
 """Tests for crypto/commitment.py"""
 
 import unittest
-from crypto.commitment import commit, verify, commitment_to_bytes
+
+from crypto.commitment import commit, commitment_to_bytes, verify
 
 
 class TestCommit(unittest.TestCase):
-
     def test_commit_returns_64_char_hex(self):
         c = commit(1000)
         self.assertEqual(len(c.commitment_hex), 64)
@@ -35,7 +35,6 @@ class TestCommit(unittest.TestCase):
 
 
 class TestVerify(unittest.TestCase):
-
     def test_verify_correct(self):
         c = commit(1500)
         self.assertTrue(verify(1500, c.randomness_hex, c.commitment_hex))
@@ -69,7 +68,6 @@ class TestVerify(unittest.TestCase):
 
 
 class TestCommitmentToBytes(unittest.TestCase):
-
     def test_returns_32_bytes(self):
         c = commit(42)
         b = commitment_to_bytes(c.commitment_hex)
