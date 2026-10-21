@@ -4,17 +4,18 @@ Auction State Machine Module
 
 Implements a sealed-bid auction with a 3-phase cryptographic protocol:
 
-  OPEN → COMMITTED → PROVED → REVEALED → FINISHED
+  OPEN → COMMITTED → PROVED → FINISHED
 
 State transitions:
   OPEN      → COMMITTED : all bidders have submitted their hash commitments
-  COMMITTED → PROVED    : all bidders have submitted valid ZK range proofs
-  PROVED    → REVEALED  : all bidders have revealed (bid, randomness) pairs
-  REVEALED  → FINISHED  : winner is determined after all reveals are verified
+  COMMITTED → PROVED    : all bidders have submitted a range proof (valid or not)
+  PROVED    → FINISHED  : all bidders have revealed (bid, randomness); the winner
+                          is determined from the verified reveals
 
 Security model: honest-but-curious auctioneer.
-The auctioneer sees only commitments and ZK proofs in phases 1-2,
-and learns actual bid values only in phase 3.
+The auctioneer should see only commitments and ZK proofs in phases 1-2, and
+learn actual bid values only in phase 3. Not met yet: the server currently
+receives bids in plaintext (see README).
 """
 
 from dataclasses import dataclass
@@ -32,7 +33,6 @@ class AuctionState(Enum):
     OPEN = "open"
     COMMITTED = "committed"
     PROVED = "proved"
-    REVEALED = "revealed"
     FINISHED = "finished"
 
 
@@ -44,6 +44,7 @@ class BidderState:
     name: str
     # Phase 1 — public after commit
     commitment_hex: str | None = None
+    commit_order: int | None = None  # 0 for the first commitment received, 1 next, ...
     # Phase 2 — public after prove
     range_proof: dict | None = None  # RangeProof serialised as dict
     proof_valid: bool | None = None
@@ -76,11 +77,13 @@ class Auction:
     def __init__(self, config: AuctionConfig) -> None:
         self.config = config
         self.state = AuctionState.OPEN
-        # Preserve insertion order for tie-breaking (first committed wins ties)
         self.bidders: dict = {}
         for idx, name in enumerate(config.bidder_names):
             bidder_id = f"bidder_{idx}"
             self.bidders[bidder_id] = BidderState(bidder_id=bidder_id, name=name)
+        # Ties go to the earliest commitment. A counter orders commitments
+        # deterministically, where timestamps could collide or be skewed.
+        self._commits_received = 0
 
     # ------------------------------------------------------------------
     # Phase 1 — Commit
@@ -117,6 +120,8 @@ class Auction:
             )
 
         bidder.commitment_hex = commitment_hex
+        bidder.commit_order = self._commits_received
+        self._commits_received += 1
 
         if all(b.commitment_hex is not None for b in self.bidders.values()):
             self.state = AuctionState.COMMITTED
@@ -231,10 +236,8 @@ class Auction:
         Raises:
             ValueError: On invalid state, unknown bidder, missing proof, or duplicate reveal.
         """
-        if self.state not in (AuctionState.PROVED, AuctionState.REVEALED):
-            raise ValueError(
-                f"Cannot reveal in state '{self.state.value}'. Expected PROVED or REVEALED."
-            )
+        if self.state != AuctionState.PROVED:
+            raise ValueError(f"Cannot reveal in state '{self.state.value}'. Expected PROVED.")
         if bidder_id not in self.bidders:
             raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
 
@@ -282,7 +285,7 @@ class Auction:
         """
         Return the complete public state visible to all participants.
 
-        Bid values are included only in REVEALED / FINISHED states.
+        Bid values and randomness are included only once the auction is FINISHED.
         """
         bidders_public = []
         for b in self.bidders.values():
@@ -290,11 +293,15 @@ class Auction:
                 "bidder_id": b.bidder_id,
                 "name": b.name,
                 "commitment_hex": b.commitment_hex,
+                "commit_order": b.commit_order,
                 "proof_valid": b.proof_valid,
                 "commitment_verified": b.commitment_verified,
             }
-            # Reveal bid and randomness only in phase 3+
-            if self.state in (AuctionState.REVEALED, AuctionState.FINISHED):
+            # Publishing reveals as they arrive would let bidders who have not
+            # revealed yet see the others' bids and withhold their own if they
+            # are losing (selective abort), so openings stay hidden until all
+            # bidders have revealed.
+            if self.state == AuctionState.FINISHED:
                 entry["revealed_bid"] = b.revealed_bid
                 entry["randomness_hex"] = b.randomness_hex
             bidders_public.append(entry)
@@ -312,18 +319,16 @@ class Auction:
         """
         Determine and return the auction winner.
 
-        Only valid after REVEALED state. The winner is the bidder with the highest
-        bid among eligible bidders: those whose range proof was valid, whose
-        reveal opened their commitment, and whose revealed bid lies within
-        [min_bid, max_bid]. In case of a tie, the bidder who appears
-        earlier in the original bidder list wins (implicit tie-breaking by commit
-        order).
+        The winner is the bidder with the highest bid among eligible bidders:
+        those whose range proof was valid, whose reveal opened their commitment,
+        and whose revealed bid lies within [min_bid, max_bid]. In case of a tie,
+        the bidder who committed first wins.
 
         Returns:
             dict with winner info, or None if the auction is not yet finished or
             no bidder is eligible.
         """
-        if self.state not in (AuctionState.REVEALED, AuctionState.FINISHED):
+        if self.state != AuctionState.FINISHED:
             return None
 
         # A bid only counts if every check passed: the range proof vouches that
@@ -343,7 +348,8 @@ class Auction:
         if not eligible:
             return None
 
-        winner = max(eligible, key=lambda b: b.revealed_bid)
+        # Highest bid first; among equal bids, the earliest commitment.
+        winner = min(eligible, key=lambda b: (-b.revealed_bid, b.commit_order))
         return {
             "bidder_id": winner.bidder_id,
             "name": winner.name,
@@ -353,24 +359,6 @@ class Auction:
 
     def _in_range(self, bid: int) -> bool:
         return self.config.min_bid <= bid <= self.config.max_bid
-
-    def can_advance_phase(self) -> bool:
-        """
-        Check whether all bidders have completed the current phase.
-
-        Returns True if every bidder satisfies the completion condition for the
-        current state, indicating it is time to transition to the next phase.
-        """
-        if self.state == AuctionState.OPEN:
-            return all(b.commitment_hex is not None for b in self.bidders.values())
-
-        if self.state == AuctionState.COMMITTED:
-            return all(b.proof_valid is not None for b in self.bidders.values())
-
-        if self.state in (AuctionState.PROVED, AuctionState.REVEALED):
-            return all(b.revealed_bid is not None for b in self.bidders.values())
-
-        return False
 
 
 if __name__ == "__main__":

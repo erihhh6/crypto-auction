@@ -6,7 +6,7 @@ from dataclasses import asdict
 from crypto.auction import Auction, AuctionConfig, AuctionState
 from crypto.commitment import commit
 from crypto.zkp import prove_range
-from tests.support import forged_range_proof, known_bug
+from tests.support import forged_range_proof
 
 
 def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
@@ -225,12 +225,6 @@ class TestPhase3Reveal(unittest.TestCase):
         with self.assertRaises(ValueError):
             auction.submit_reveal("bidder_0", 1000, c.randomness_hex)
 
-    def test_tie_won_by_first_in_list(self):
-        auction = run_full_auction({"Alice": 1000, "Bob": 1000})
-        winner = auction.get_winner()
-        self.assertEqual(winner["name"], "Alice")
-
-    @known_bug("ties go to the earlier name in the bidder list, not the earliest commitment")
     def test_tie_won_by_earliest_commitment(self):
         auction = make_auction(["Alice", "Bob"])
         alice, bob = commit(1000), commit(1000)
@@ -291,6 +285,29 @@ class TestPublicState(unittest.TestCase):
         state = auction.get_public_state()
         for b in state["bidders"]:
             self.assertNotIn("revealed_bid", b)
+
+    def test_bids_hidden_until_every_bidder_revealed(self):
+        # Otherwise a bidder who has not revealed yet could see the others'
+        # bids and withhold their own if losing (selective abort).
+        auction = make_auction(["Alice", "Bob"])
+        openings = {"bidder_0": (1200, commit(1200)), "bidder_1": (800, commit(800))}
+        for bidder_id, (_, c) in openings.items():
+            auction.submit_commitment(bidder_id, c.commitment_hex)
+        for bidder_id, (bid, c) in openings.items():
+            auction.submit_proof(
+                bidder_id, _proof_dict(bid, c.randomness_hex, c.commitment_hex, 100, 5000)
+            )
+        auction.submit_reveal("bidder_0", 1200, openings["bidder_0"][1].randomness_hex)
+        for b in auction.get_public_state()["bidders"]:
+            self.assertNotIn("revealed_bid", b)
+            self.assertNotIn("randomness_hex", b)
+
+    def test_commit_order_is_public(self):
+        auction = make_auction(["Alice", "Bob"])
+        auction.submit_commitment("bidder_1", commit(1000).commitment_hex)  # Bob first
+        auction.submit_commitment("bidder_0", commit(1000).commitment_hex)
+        orders = {b["name"]: b["commit_order"] for b in auction.get_public_state()["bidders"]}
+        self.assertEqual(orders, {"Alice": 1, "Bob": 0})
 
     def test_bids_visible_after_reveal(self):
         auction = run_full_auction({"Alice": 1200, "Bob": 800})

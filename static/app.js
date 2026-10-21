@@ -275,12 +275,10 @@ function renderAll(state) {
 // Phase indicator
 // ---------------------------------------------------------------------------
 
-const PHASE_ORDER = ["open", "committed", "proved", "revealed", "finished"];
 const PHASE_PILL_MAP = {
   open:      "commit",
   committed: "commit",
   proved:    "prove",
-  revealed:  "reveal",
   finished:  "finished",
 };
 
@@ -369,7 +367,7 @@ function renderBidderCards(state) {
       } else if (hasProved) {
         actionHTML = `<span style="font-size:11px;color:var(--color-prove)">✓ Proved (${b.proof_valid ? "valid" : "invalid"})</span>`;
       }
-    } else if (phase === "proved" || phase === "revealed") {
+    } else if (phase === "proved") {
       if (hasProved && !hasRevealed) {
         const hasSecret = !!localState.bidderSecrets[b.bidder_id];
         actionHTML = `
@@ -421,9 +419,7 @@ function renderActionsPanel(state) {
     committed: { title: "Phase 2 — ZK Prove", color: "var(--color-prove)",
       desc: "Each bidder proves their bid is in the valid range <strong>[min, max]</strong> using a Sigma-protocol ZK range proof, without revealing the bid." },
     proved:    { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
-      desc: "Each bidder reveals <code>(bid, randomness)</code>. The auctioneer verifies the commitment opening. Highest verified bid wins." },
-    revealed:  { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
-      desc: "Revealing bids…" },
+      desc: "Each bidder reveals <code>(bid, randomness)</code>. The auctioneer verifies the commitment opening. Highest verified bid wins; ties go to the earliest commitment." },
     finished:  { title: "Auction Complete", color: "var(--color-finish)",
       desc: "All bids have been revealed and verified. The winner has been determined." },
   };
@@ -448,10 +444,6 @@ function renderActionsPanel(state) {
       progressPct   = total > 0 ? (proved / total) * 100 : 0;
       progressClass = "progress-prove";
     } else if (phase === "proved") {
-      progressLabel = `Revealed: ${revealed} / ${total}`;
-      progressPct   = total > 0 ? (revealed / total) * 100 : 0;
-      progressClass = "progress-reveal";
-    } else if (phase === "revealed") {
       progressLabel = `Revealed: ${revealed} / ${total}`;
       progressPct   = total > 0 ? (revealed / total) * 100 : 0;
       progressClass = "progress-reveal";
