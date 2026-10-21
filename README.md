@@ -7,8 +7,9 @@
 A web application (Flask + vanilla JS) demonstrating a complete 3-phase sealed-bid
 auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
-> Built as a portfolio project to demonstrate applied cryptography concepts
-> using only Python's standard library (`hashlib`, `os`, `struct`) and Flask.
+> Built as a portfolio project to demonstrate applied cryptography concepts,
+> using Python's standard library, Flask, and the pure-Python
+> [`ecdsa`](https://pypi.org/project/ecdsa/) package for secp256k1 arithmetic.
 
 > [!WARNING]
 > **Work in progress.** This started as a prototype and is being hardened step
@@ -136,6 +137,7 @@ crypto-auction/
 │   └── crypto_auction/       # The installable package
 │       ├── __init__.py
 │       ├── commitment.py     # SHA-256 commitment scheme
+│       ├── pedersen.py       # Pedersen commitments on secp256k1 (replacing commitment.py)
 │       ├── zkp.py            # Range proof (Sigma + Fiat-Shamir), currently unsound
 │       ├── auction.py        # State machine + auction logic
 │       ├── service.py        # Runs one auction and the server's protocol steps
@@ -151,6 +153,7 @@ crypto-auction/
 │   │   └── render.test.mjs   # Frontend rendering (HTML escaping), via node --test
 │   ├── support.py            # Shared helpers (known_bug marker, proof forger)
 │   ├── test_commitment.py    # Commitment scheme
+│   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
 │   ├── test_zkp.py           # Range proof, incl. soundness
 │   ├── test_auction.py       # State machine and winner selection
 │   ├── test_api.py           # REST API via Flask's test client
