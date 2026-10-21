@@ -2,7 +2,7 @@
 
 import unittest
 
-from crypto_auction.commitment import commit, commitment_to_bytes, verify
+from crypto_auction.commitment import commit, verify
 
 
 class TestCommit(unittest.TestCase):
@@ -65,19 +65,6 @@ class TestVerify(unittest.TestCase):
             c = commit(bid)
             self.assertTrue(verify(bid, c.randomness_hex, c.commitment_hex))
             self.assertFalse(verify(bid + 1, c.randomness_hex, c.commitment_hex))
-
-
-class TestCommitmentToBytes(unittest.TestCase):
-    def test_returns_32_bytes(self):
-        c = commit(42)
-        b = commitment_to_bytes(c.commitment_hex)
-        self.assertIsInstance(b, bytes)
-        self.assertEqual(len(b), 32)
-
-    def test_round_trips(self):
-        c = commit(42)
-        b = commitment_to_bytes(c.commitment_hex)
-        self.assertEqual(b.hex(), c.commitment_hex)
 
 
 if __name__ == "__main__":

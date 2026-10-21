@@ -12,7 +12,7 @@ def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
     if bidder_names is None:
         bidder_names = ["Alice", "Bob", "Carol"]
     config = AuctionConfig(
-        min_bid=min_bid, max_bid=max_bid, item_name="Test Item", bidder_names=bidder_names
+        min_bid=min_bid, max_bid=max_bid, item_name="Test Item", bidder_names=tuple(bidder_names)
     )
     return Auction(config)
 
@@ -129,13 +129,13 @@ class TestPhase2Prove(unittest.TestCase):
     def test_invalid_proof_dict_marks_invalid(self):
         auction, _ = self._committed_auction()
         result = auction.submit_proof("bidder_0", {"bad": "data"})
-        self.assertFalse(result["proof_valid"])
+        self.assertFalse(result.proof_valid)
 
     def test_proof_for_another_commitment_is_invalid(self):
         auction, _ = self._committed_auction()
         other = commit(2000)
         pd = _proof_dict(2000, other.randomness_hex, other.commitment_hex, 100, 5000)
-        self.assertFalse(auction.submit_proof("bidder_0", pd)["proof_valid"])
+        self.assertFalse(auction.submit_proof("bidder_0", pd).proof_valid)
 
     def test_proof_for_another_range_is_invalid(self):
         auction, secrets = self._committed_auction()
@@ -144,15 +144,15 @@ class TestPhase2Prove(unittest.TestCase):
         for bidder_id, bounds in (("bidder_0", (0, 5000)), ("bidder_1", (100, 10**9))):
             s = secrets[bidder_id]
             pd = _proof_dict(s["bid"], s["randomness_hex"], s["commitment_hex"], *bounds)
-            self.assertFalse(auction.submit_proof(bidder_id, pd)["proof_valid"], bounds)
+            self.assertFalse(auction.submit_proof(bidder_id, pd).proof_valid, bounds)
 
 
 class TestPhase3Reveal(unittest.TestCase):
     def test_highest_bid_wins(self):
         auction = run_full_auction({"Alice": 1200, "Bob": 1800, "Carol": 1500})
         winner = auction.get_winner()
-        self.assertEqual(winner["name"], "Bob")
-        self.assertEqual(winner["bid"], 1800)
+        self.assertEqual(winner.name, "Bob")
+        self.assertEqual(winner.bid, 1800)
 
     def test_state_is_finished_after_all_reveal(self):
         auction = run_full_auction({"Alice": 1000, "Bob": 2000})
@@ -184,7 +184,7 @@ class TestPhase3Reveal(unittest.TestCase):
         auction.submit_reveal("bidder_1", 9999, s_bob["randomness_hex"])
 
         winner = auction.get_winner()
-        self.assertEqual(winner["name"], "Alice")  # Bob disqualified
+        self.assertEqual(winner.name, "Alice")  # Bob disqualified
 
     def test_double_reveal_raises(self):
         auction = make_auction(["Alice", "Bob"], 100, 5000)
@@ -223,7 +223,7 @@ class TestPhase3Reveal(unittest.TestCase):
             auction.submit_proof(bidder_id, pd)
         for bidder_id, c in (("bidder_0", alice), ("bidder_1", bob)):
             auction.submit_reveal(bidder_id, 1000, c.randomness_hex)
-        self.assertEqual(auction.get_winner()["name"], "Bob")
+        self.assertEqual(auction.get_winner().name, "Bob")
 
     def test_bidder_with_invalid_proof_cannot_win(self):
         auction = make_auction(["Alice", "Bob"])
@@ -235,7 +235,7 @@ class TestPhase3Reveal(unittest.TestCase):
         auction.submit_proof("bidder_1", {"bad": "data"})  # recorded as proof_valid=False
         auction.submit_reveal("bidder_0", 1000, alice.randomness_hex)
         auction.submit_reveal("bidder_1", 3000, bob.randomness_hex)
-        self.assertEqual(auction.get_winner()["name"], "Alice")
+        self.assertEqual(auction.get_winner().name, "Alice")
 
     def test_no_winner_when_no_bidder_is_eligible(self):
         auction = make_auction(["Alice", "Bob"])
@@ -247,7 +247,7 @@ class TestPhase3Reveal(unittest.TestCase):
         for bidder_id, bid in (("bidder_0", 1000), ("bidder_1", 3000)):
             result = auction.submit_reveal(bidder_id, bid, openings[bidder_id].randomness_hex)
         self.assertEqual(auction.state, AuctionState.FINISHED)
-        self.assertIsNone(result["winner"])
+        self.assertIsNone(result.winner)
         self.assertIsNone(auction.get_public_state()["winner"])
 
     def test_out_of_range_bid_cannot_win(self):
@@ -261,7 +261,7 @@ class TestPhase3Reveal(unittest.TestCase):
         auction.submit_proof("bidder_1", forged.to_dict())
         auction.submit_reveal("bidder_0", 4000, alice.randomness_hex)
         auction.submit_reveal("bidder_1", 999_999, mallory.randomness_hex)
-        self.assertEqual(auction.get_winner()["name"], "Alice")
+        self.assertEqual(auction.get_winner().name, "Alice")
 
 
 class TestPublicState(unittest.TestCase):

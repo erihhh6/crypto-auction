@@ -96,18 +96,3 @@ def verify(bid: int, randomness_hex: str, commitment_hex: str) -> bool:
         return expected == commitment_hex
     except (ValueError, struct.error):
         return False
-
-
-def commitment_to_bytes(commitment_hex: str) -> bytes:
-    """
-    Convert a commitment hex string to raw bytes.
-
-    Used when embedding commitments into ZK proof hash computations.
-
-    Args:
-        commitment_hex: A 64-character hex string representing a SHA-256 digest.
-
-    Returns:
-        32 bytes decoded from the hex string.
-    """
-    return bytes.fromhex(commitment_hex)

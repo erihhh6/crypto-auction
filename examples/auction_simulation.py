@@ -12,7 +12,7 @@ def main() -> None:
         min_bid=100,
         max_bid=5000,
         item_name="Rare NFT #42",
-        bidder_names=["Alice", "Bob", "Carol"],
+        bidder_names=("Alice", "Bob", "Carol"),
     )
     auction = Auction(config)
 
@@ -30,7 +30,7 @@ def main() -> None:
         c = commit(bid)
         secrets[bidder_id] = {"bid": bid, "randomness_hex": c.randomness_hex}
         result = auction.submit_commitment(bidder_id, c.commitment_hex)
-        print(f"  {name}: commitment={c.commitment_hex[:16]}...  -> phase={result['phase']}")
+        print(f"  {name}: commitment={c.commitment_hex[:16]}...  -> phase={result.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
@@ -43,7 +43,7 @@ def main() -> None:
             bid, s["randomness_hex"], commitment_hex, config.min_bid, config.max_bid
         )
         result = auction.submit_proof(bidder_id, proof.to_dict())
-        print(f"  {name}: proof_valid={result['proof_valid']}  -> phase={result['phase']}")
+        print(f"  {name}: proof_valid={result.proof_valid}  -> phase={result.phase.value}")
 
     print(f"\nAuction state: {auction.state.value}")
 
@@ -52,13 +52,13 @@ def main() -> None:
         s = secrets[bidder_id]
         result = auction.submit_reveal(bidder_id, s["bid"], s["randomness_hex"])
         print(
-            f"  {name}: bid={s['bid']}, verified={result['verified']}  -> phase={result['phase']}"
+            f"  {name}: bid={s['bid']}, verified={result.verified}  -> phase={result.phase.value}"
         )
 
     print(f"\nAuction state: {auction.state.value}")
 
     winner = auction.get_winner()
-    print(f"\n=== WINNER: {winner['name']} with bid {winner['bid']} ===")
+    print(f"\n=== WINNER: {winner.name} with bid {winner.bid} ===")
 
     public = auction.get_public_state()
     print("\nPublic state summary:")

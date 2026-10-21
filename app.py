@@ -205,7 +205,7 @@ def create_auction():
         min_bid=min_bid,
         max_bid=max_bid,
         item_name=item_name,
-        bidder_names=bidder_names,
+        bidder_names=tuple(bidder_names),
     )
     auction = Auction(config)
 
@@ -286,8 +286,8 @@ def submit_commit():
             "success": True,
             "commitment_hex": c.commitment_hex,
             "randomness_hex": c.randomness_hex,  # returned once; server does not store it
-            "phase": result["phase"],
-            "message": result["message"],
+            "phase": result.phase.value,
+            "message": result.message,
         }
     )
 
@@ -351,10 +351,10 @@ def submit_prove():
     return jsonify(
         {
             "success": True,
-            "proof_valid": result["proof_valid"],
+            "proof_valid": result.proof_valid,
             "proof_public": proof_dict,
-            "phase": result["phase"],
-            "message": result["message"],
+            "phase": result.phase.value,
+            "message": result.message,
         }
     )
 
@@ -394,10 +394,10 @@ def submit_reveal():
     return jsonify(
         {
             "success": True,
-            "verified": result["verified"],
-            "phase": result["phase"],
-            "message": result["message"],
-            "winner": result["winner"],
+            "verified": result.verified,
+            "phase": result.phase.value,
+            "message": result.message,
+            "winner": result.winner.to_dict() if result.winner else None,
         }
     )
 

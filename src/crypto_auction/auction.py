@@ -18,7 +18,7 @@ learn actual bid values only in phase 3. Not met yet: the server currently
 receives bids in plaintext (see README).
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 
 from crypto_auction.commitment import verify as verify_commitment
@@ -50,14 +50,46 @@ class BidderState:
     commitment_verified: bool | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class AuctionConfig:
     """Immutable configuration set when the auction is created."""
 
     min_bid: int
     max_bid: int
     item_name: str
-    bidder_names: list
+    bidder_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Winner:
+    bidder_id: str
+    name: str
+    bid: int
+    commitment_hex: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    phase: AuctionState
+    message: str
+
+
+@dataclass(frozen=True)
+class ProofResult:
+    proof_valid: bool
+    phase: AuctionState
+    message: str
+
+
+@dataclass(frozen=True)
+class RevealResult:
+    verified: bool
+    phase: AuctionState
+    message: str
+    winner: Winner | None  # set by the reveal that finishes the auction
 
 
 class Auction:
@@ -73,7 +105,7 @@ class Auction:
     def __init__(self, config: AuctionConfig) -> None:
         self.config = config
         self.state = AuctionState.OPEN
-        self.bidders: dict = {}
+        self.bidders: dict[str, BidderState] = {}
         for idx, name in enumerate(config.bidder_names):
             bidder_id = f"bidder_{idx}"
             self.bidders[bidder_id] = BidderState(bidder_id=bidder_id, name=name)
@@ -85,7 +117,7 @@ class Auction:
     # Phase 1 — Commit
     # ------------------------------------------------------------------
 
-    def submit_commitment(self, bidder_id: str, commitment_hex: str) -> dict:
+    def submit_commitment(self, bidder_id: str, commitment_hex: str) -> CommitResult:
         """
         Record a bidder's hash commitment.
 
@@ -97,7 +129,7 @@ class Auction:
             commitment_hex: SHA-256 hex digest of (bid_bytes || randomness).
 
         Returns:
-            dict with keys: success, phase, bidder_id, message.
+            The phase after this commitment, and a message for the protocol log.
 
         Raises:
             ValueError: On invalid state, unknown bidder_id, or duplicate commit.
@@ -122,18 +154,13 @@ class Auction:
         if all(b.commitment_hex is not None for b in self.bidders.values()):
             self.state = AuctionState.COMMITTED
 
-        return {
-            "success": True,
-            "phase": self.state.value,
-            "bidder_id": bidder_id,
-            "message": f"{bidder.name} committed successfully.",
-        }
+        return CommitResult(phase=self.state, message=f"{bidder.name} committed successfully.")
 
     # ------------------------------------------------------------------
     # Phase 2 — ZK Range Proof
     # ------------------------------------------------------------------
 
-    def submit_proof(self, bidder_id: str, proof_data: dict) -> dict:
+    def submit_proof(self, bidder_id: str, proof_data: dict) -> ProofResult:
         """
         Receive and verify a ZK range proof from a bidder.
 
@@ -141,14 +168,14 @@ class Auction:
         [min_bid, max_bid]; a proof of any other statement is recorded as invalid.
 
         Allowed in states COMMITTED and PROVED.
-        Advances to PROVED once all proofs are received and valid.
+        Advances to PROVED once every bidder has submitted a proof, valid or not.
 
         Args:
             bidder_id: Identifier of the bidder submitting the proof.
             proof_data: A RangeProof serialised with RangeProof.to_dict().
 
         Returns:
-            dict with keys: success, proof_valid, phase, bidder_id, message.
+            Whether the proof is valid, the phase after it, and a log message.
 
         Raises:
             ValueError: On invalid state, unknown bidder_id, or missing commitment.
@@ -188,19 +215,17 @@ class Auction:
         if all(b.proof_valid is not None for b in self.bidders.values()):
             self.state = AuctionState.PROVED
 
-        return {
-            "success": True,
-            "proof_valid": is_valid,
-            "phase": self.state.value,
-            "bidder_id": bidder_id,
-            "message": f"{bidder.name}'s proof is {'valid' if is_valid else 'INVALID'}.",
-        }
+        return ProofResult(
+            proof_valid=is_valid,
+            phase=self.state,
+            message=f"{bidder.name}'s proof is {'valid' if is_valid else 'INVALID'}.",
+        )
 
     # ------------------------------------------------------------------
     # Phase 3 — Reveal
     # ------------------------------------------------------------------
 
-    def submit_reveal(self, bidder_id: str, bid: int, randomness_hex: str) -> dict:
+    def submit_reveal(self, bidder_id: str, bid: int, randomness_hex: str) -> RevealResult:
         """
         Accept a bidder's reveal of (bid, randomness) and verify against commitment.
 
@@ -217,7 +242,8 @@ class Auction:
             randomness_hex: The secret randomness used in Phase 1.
 
         Returns:
-            dict with keys: success, verified, phase, bidder_id, winner (may be None).
+            Whether the opening matches the commitment, the phase after this
+            reveal, a log message, and the winner once the auction is finished.
 
         Raises:
             ValueError: On invalid state, unknown bidder, missing proof, or duplicate reveal.
@@ -254,14 +280,12 @@ class Auction:
         else:
             outcome = "verified"
 
-        return {
-            "success": True,
-            "verified": is_verified,
-            "phase": self.state.value,
-            "bidder_id": bidder_id,
-            "message": f"{bidder.name}'s reveal is {outcome}.",
-            "winner": winner,
-        }
+        return RevealResult(
+            verified=is_verified,
+            phase=self.state,
+            message=f"{bidder.name}'s reveal is {outcome}.",
+            winner=winner,
+        )
 
     # ------------------------------------------------------------------
     # Queries
@@ -292,16 +316,17 @@ class Auction:
                 entry["randomness_hex"] = b.randomness_hex
             bidders_public.append(entry)
 
+        winner = self.get_winner()
         return {
             "state": self.state.value,
             "item_name": self.config.item_name,
             "min_bid": self.config.min_bid,
             "max_bid": self.config.max_bid,
             "bidders": bidders_public,
-            "winner": self.get_winner(),
+            "winner": winner.to_dict() if winner else None,
         }
 
-    def get_winner(self) -> dict | None:
+    def get_winner(self) -> Winner | None:
         """
         Determine and return the auction winner.
 
@@ -311,8 +336,8 @@ class Auction:
         the bidder who committed first wins.
 
         Returns:
-            dict with winner info, or None if the auction is not yet finished or
-            no bidder is eligible.
+            The winner, or None if the auction is not yet finished or no bidder
+            is eligible.
         """
         if self.state != AuctionState.FINISHED:
             return None
@@ -335,13 +360,13 @@ class Auction:
             return None
 
         # Highest bid first; among equal bids, the earliest commitment.
-        winner = min(eligible, key=lambda b: (-b.revealed_bid, b.commit_order))
-        return {
-            "bidder_id": winner.bidder_id,
-            "name": winner.name,
-            "bid": winner.revealed_bid,
-            "commitment_hex": winner.commitment_hex,
-        }
+        best = min(eligible, key=lambda b: (-b.revealed_bid, b.commit_order))
+        return Winner(
+            bidder_id=best.bidder_id,
+            name=best.name,
+            bid=best.revealed_bid,
+            commitment_hex=best.commitment_hex,
+        )
 
     def _in_range(self, bid: int) -> bool:
         return self.config.min_bid <= bid <= self.config.max_bid
