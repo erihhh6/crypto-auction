@@ -242,7 +242,6 @@ class TestPhase3Reveal(unittest.TestCase):
             auction.submit_reveal(bidder_id, 1000, c.randomness_hex)
         self.assertEqual(auction.get_winner()["name"], "Bob")
 
-    @known_bug("get_winner ignores proof_valid, so a bidder whose proof failed can still win")
     def test_bidder_with_invalid_proof_cannot_win(self):
         auction = make_auction(["Alice", "Bob"])
         alice, bob = commit(1000), commit(3000)
@@ -254,6 +253,19 @@ class TestPhase3Reveal(unittest.TestCase):
         auction.submit_reveal("bidder_0", 1000, alice.randomness_hex)
         auction.submit_reveal("bidder_1", 3000, bob.randomness_hex)
         self.assertEqual(auction.get_winner()["name"], "Alice")
+
+    def test_no_winner_when_no_bidder_is_eligible(self):
+        auction = make_auction(["Alice", "Bob"])
+        openings = {"bidder_0": commit(1000), "bidder_1": commit(3000)}
+        for bidder_id, c in openings.items():
+            auction.submit_commitment(bidder_id, c.commitment_hex)
+        for bidder_id in openings:
+            auction.submit_proof(bidder_id, {"bad": "data"})
+        for bidder_id, bid in (("bidder_0", 1000), ("bidder_1", 3000)):
+            result = auction.submit_reveal(bidder_id, bid, openings[bidder_id].randomness_hex)
+        self.assertEqual(auction.state, AuctionState.FINISHED)
+        self.assertIsNone(result["winner"])
+        self.assertIsNone(auction.get_public_state()["winner"])
 
     @known_bug("a bid outside [min, max] can win: proofs are forgeable and reveal never rechecks")
     def test_out_of_range_bid_cannot_win(self):

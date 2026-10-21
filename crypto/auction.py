@@ -204,7 +204,8 @@ class Auction:
         Accept a bidder's reveal of (bid, randomness) and verify against commitment.
 
         Bidders with a failed commitment verification are marked as cheaters and
-        excluded from the winner determination.
+        excluded from the winner determination. Bidders whose range proof was
+        invalid may still reveal, so the auction can finish, but cannot win.
 
         Advances to FINISHED once all bidders have revealed.
 
@@ -297,27 +298,33 @@ class Auction:
         Determine and return the auction winner.
 
         Only valid after REVEALED state. The winner is the bidder with the highest
-        verified bid among those with commitment_verified=True. In case of a tie,
-        the bidder who appears earlier in the original bidder list wins
-        (implicit tie-breaking by commit order).
+        bid among eligible bidders: those whose range proof was valid and whose
+        reveal opened their commitment. In case of a tie, the bidder who appears
+        earlier in the original bidder list wins (implicit tie-breaking by commit
+        order).
 
         Returns:
-            dict with winner info, or None if the auction is not yet finished.
+            dict with winner info, or None if the auction is not yet finished or
+            no bidder is eligible.
         """
         if self.state not in (AuctionState.REVEALED, AuctionState.FINISHED):
             return None
 
-        # Only consider bidders with verified commitments
-        verified = [
+        # A bid only counts if both checks passed: the range proof vouches that
+        # the committed bid lies in [min, max], and the opening shows the
+        # revealed bid is the committed one. Either alone is not enough.
+        eligible = [
             b
             for b in self.bidders.values()
-            if b.commitment_verified is True and b.revealed_bid is not None
+            if b.proof_valid is True
+            and b.commitment_verified is True
+            and b.revealed_bid is not None
         ]
 
-        if not verified:
+        if not eligible:
             return None
 
-        winner = max(verified, key=lambda b: b.revealed_bid)
+        winner = max(eligible, key=lambda b: b.revealed_bid)
         return {
             "bidder_id": winner.bidder_id,
             "name": winner.name,
