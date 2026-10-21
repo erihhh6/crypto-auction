@@ -94,7 +94,7 @@ Development setup (tests, coverage, lint):
 
 ```bash
 pip install -r requirements-dev.txt
-pytest --cov                # test suite with branch coverage
+pytest --cov                # test suite with branch coverage (fails below the floor)
 ruff check .                # lint
 ruff format --check .       # formatting
 ```
