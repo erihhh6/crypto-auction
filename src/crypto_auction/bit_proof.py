@@ -30,6 +30,7 @@ import secrets
 from dataclasses import dataclass
 
 from crypto_auction.pedersen import G, H, N, Point, commit_with, encode_point
+from crypto_auction.transcript import encode_parts
 
 _DOMAIN = b"crypto-auction/bit-proof/v1"
 
@@ -67,8 +68,7 @@ def _challenge(commitment: Point, context: bytes, a0: Point, a1: Point) -> int:
     same byte string. SHA-512 reduced mod n keeps the bias from the reduction
     negligible (about 2**-256).
     """
-    h = hashlib.sha512()
-    for part in (
+    transcript = encode_parts(
         _DOMAIN,
         encode_point(G).encode(),
         encode_point(H).encode(),
@@ -76,10 +76,8 @@ def _challenge(commitment: Point, context: bytes, a0: Point, a1: Point) -> int:
         context,
         encode_point(a0).encode(),
         encode_point(a1).encode(),
-    ):
-        h.update(len(part).to_bytes(4, "big"))
-        h.update(part)
-    return int.from_bytes(h.digest(), "big") % N
+    )
+    return int.from_bytes(hashlib.sha512(transcript).digest(), "big") % N
 
 
 def prove_bit(commitment: Point, bit: int, blinding: int, context: bytes) -> BitProof:

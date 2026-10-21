@@ -14,7 +14,9 @@ from crypto_auction.pedersen import (
     commit,
     commit_with,
     decode_point,
+    decode_scalar,
     encode_point,
+    encode_scalar,
     verify,
 )
 
@@ -134,6 +136,21 @@ class TestEncoding(unittest.TestCase):
     def test_point_at_infinity_cannot_be_encoded(self):
         with self.assertRaises(ValueError):
             encode_point(commit_with(0, 0))
+
+    def test_scalars_round_trip_at_fixed_width(self):
+        for scalar in (0, 1, N - 1):
+            with self.subTest(scalar=scalar):
+                encoded = encode_scalar(scalar)
+                self.assertEqual(len(encoded), 64)
+                self.assertEqual(decode_scalar(encoded), scalar)
+
+    def test_rejects_malformed_scalars(self):
+        # One encoding per scalar: fixed width, lowercase, and below n.
+        for bad in (f"{N:064x}", "ab", "ab" * 32 + "0", "AB" * 32, 12345):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                decode_scalar(bad)
+        with self.assertRaises(ValueError):
+            encode_scalar(N)
 
 
 if __name__ == "__main__":

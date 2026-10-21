@@ -46,6 +46,7 @@ G: Point = SECP256k1.generator
 
 # Compressed SEC1 encoding: 02/03 (parity of y) followed by the 32-byte x.
 _COMPRESSED_HEX = re.compile(r"0[23][0-9a-f]{64}")
+_SCALAR_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def _hash_to_curve(tag: bytes) -> Point:
@@ -141,3 +142,25 @@ def decode_point(encoded: str) -> Point:
         )
     except MalformedPointError as exc:
         raise ValueError(f"Not a point on secp256k1: {encoded!r}.") from exc
+
+
+def encode_scalar(scalar: int) -> str:
+    """A scalar in [0, n) as 64 lowercase hex characters (fixed width)."""
+    _check_scalar("scalar", scalar)
+    return f"{scalar:064x}"
+
+
+def decode_scalar(encoded: str) -> int:
+    """
+    Parse a scalar produced by encode_scalar().
+
+    Raises:
+        ValueError: Unless encoded is 64 lowercase hex characters for a value
+            below n. Fixed width and range give every scalar one encoding.
+    """
+    if not isinstance(encoded, str) or not _SCALAR_HEX.fullmatch(encoded):
+        raise ValueError(f"Expected a scalar as 64 lowercase hex chars, got {encoded!r}.")
+    scalar = int(encoded, 16)
+    if scalar >= N:
+        raise ValueError(f"Scalar out of range (>= n): {encoded!r}.")
+    return scalar
