@@ -2,7 +2,7 @@
 
 import unittest
 
-from crypto.commitment import commit, commitment_to_bytes, verify
+from crypto_auction.commitment import commit, commitment_to_bytes, verify
 
 
 class TestCommit(unittest.TestCase):

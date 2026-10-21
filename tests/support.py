@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from crypto.zkp import RangeProof, _fiat_shamir_challenge
+from crypto_auction.zkp import RangeProof, _fiat_shamir_challenge
 
 
 def known_bug(reason, *, raises=AssertionError):

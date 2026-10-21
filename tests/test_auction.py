@@ -3,9 +3,9 @@
 import unittest
 from dataclasses import asdict
 
-from crypto.auction import Auction, AuctionConfig, AuctionState
-from crypto.commitment import commit
-from crypto.zkp import prove_range
+from crypto_auction.auction import Auction, AuctionConfig, AuctionState
+from crypto_auction.commitment import commit
+from crypto_auction.zkp import prove_range
 from tests.support import forged_range_proof
 
 

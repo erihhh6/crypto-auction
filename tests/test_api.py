@@ -4,8 +4,8 @@ import unittest
 from unittest import mock
 
 import app as app_module
-from crypto.auction import Auction
-from crypto.commitment import MAX_BID, verify
+from crypto_auction.auction import Auction
+from crypto_auction.commitment import MAX_BID, verify
 from tests.support import known_bug
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.

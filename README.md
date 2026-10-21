@@ -84,7 +84,7 @@ performs the bidder's steps in phases 1 and 2 (see [Limitations](#limitations)).
 ## How to Run
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt   # installs the crypto_auction package (editable) and Flask
 python app.py
 # Open http://localhost:5000
 ```
@@ -96,12 +96,12 @@ For local development with auto-reload and the interactive debugger
 flask --app app run --debug
 ```
 
-Or test the crypto modules independently:
+Or try the cryptographic building blocks without the web app:
 
 ```bash
-python crypto/commitment.py   # commitment demo
-python crypto/zkp.py          # ZK range proof demo
-python crypto/auction.py      # full 3-bidder simulation
+python examples/commitment_demo.py      # commitment demo
+python examples/range_proof_demo.py     # ZK range proof demo
+python examples/auction_simulation.py   # full 3-bidder simulation
 ```
 
 Development setup (tests, coverage, lint):
@@ -128,13 +128,15 @@ crypto-auction/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml            # GitHub Actions CI
-├── crypto/
-│   ├── __init__.py
-│   ├── commitment.py         # SHA-256 commitment scheme
-│   ├── zkp.py                # Range proof (Sigma + Fiat-Shamir), currently unsound
-│   └── auction.py            # State machine + auction logic
 ├── docs/
 │   └── demo.gif              # Demo GIF (shown in README)
+├── examples/                 # Runnable demos of the package, no web app needed
+├── src/
+│   └── crypto_auction/       # The installable package
+│       ├── __init__.py
+│       ├── commitment.py     # SHA-256 commitment scheme
+│       ├── zkp.py            # Range proof (Sigma + Fiat-Shamir), currently unsound
+│       └── auction.py        # State machine + auction logic
 ├── static/
 │   ├── app.js                # Frontend SPA (vanilla JS)
 │   └── style.css             # Dark theme CSS
@@ -150,8 +152,8 @@ crypto-auction/
 │   ├── test_api.py           # REST API via Flask's test client
 │   └── test_app.py           # Server entry point (debug mode)
 ├── app.py                    # Flask app — all REST routes
-├── pyproject.toml            # Tool configuration (ruff, pytest, coverage)
-├── requirements.txt          # Runtime dependencies
+├── pyproject.toml            # Package metadata and tool configuration
+├── requirements.txt          # Installs the package and its dependencies
 └── requirements-dev.txt      # Test and lint tooling
 ```
 

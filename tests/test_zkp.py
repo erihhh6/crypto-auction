@@ -3,8 +3,8 @@
 import os
 import unittest
 
-from crypto.commitment import commit
-from crypto.zkp import _fiat_shamir_challenge, prove_range, verify_range_proof
+from crypto_auction.commitment import commit
+from crypto_auction.zkp import _fiat_shamir_challenge, prove_range, verify_range_proof
 from tests.support import forged_range_proof, known_bug
 
 

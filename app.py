@@ -33,9 +33,9 @@ import re
 from flask import Flask, abort, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
-from crypto.auction import Auction, AuctionConfig
-from crypto.commitment import MAX_BID, commit
-from crypto.zkp import prove_range
+from crypto_auction.auction import Auction, AuctionConfig
+from crypto_auction.commitment import MAX_BID, commit
+from crypto_auction.zkp import prove_range
 
 app = Flask(__name__)
 
