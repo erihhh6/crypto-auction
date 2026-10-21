@@ -111,6 +111,7 @@ pip install -r requirements-dev.txt
 pytest --cov                # test suite with branch coverage (fails below the floor)
 ruff check .                # lint
 ruff format --check .       # formatting
+node --test "tests/js/*.test.mjs"   # frontend rendering tests (Node 22+, no npm install)
 ```
 
 Known, not-yet-fixed bugs are recorded as tests that assert the correct
@@ -140,6 +141,8 @@ crypto-auction/
 ├── templates/
 │   └── index.html            # Single page, 3-panel layout
 ├── tests/
+│   ├── js/
+│   │   └── render.test.mjs   # Frontend rendering (HTML escaping), via node --test
 │   ├── support.py            # Shared helpers (known_bug marker, proof forger)
 │   ├── test_commitment.py    # Commitment scheme
 │   ├── test_zkp.py           # Range proof, incl. soundness

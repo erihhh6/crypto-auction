@@ -15,6 +15,22 @@ const localState = {
 // Utility helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Escape text for interpolation into HTML (element content or a quoted
+ * attribute value). Names, messages and other server data can contain
+ * markup, so every dynamic string built into innerHTML must pass through
+ * here; otherwise a bidder named `<img src=x onerror=...>` runs script in
+ * every viewer's browser.
+ */
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 /** Truncate a hex string for display: first 16 chars + "…" */
 function truncHex(hex) {
   if (!hex) return "—";
@@ -307,7 +323,7 @@ function renderBidderCards(state) {
 
     // Commitment hash line
     const commitLine = hasCommitted
-      ? `<div class="bidder-commitment-hash">C: ${truncHex(b.commitment_hex)}</div>`
+      ? `<div class="bidder-commitment-hash">C: ${escapeHtml(truncHex(b.commitment_hex))}</div>`
       : "";
 
     // Revealed bid
@@ -369,7 +385,7 @@ function renderBidderCards(state) {
       <div class="${cardClass}">
         <div class="bidder-card-name">
           <div class="bidder-avatar">👤</div>
-          ${b.name}
+          ${escapeHtml(b.name)}
         </div>
         <div class="bidder-phases">
           ${commitBadge}${proveBadge}${revealBadge}
@@ -456,7 +472,7 @@ function renderActionsPanel(state) {
     <div class="action-section">
       <div class="action-section-title">Auction Config</div>
       <div class="action-info">
-        <strong>Item:</strong> ${state.item_name}<br/>
+        <strong>Item:</strong> ${escapeHtml(state.item_name)}<br/>
         <strong>Min bid:</strong> ${fmtBid(state.min_bid)}<br/>
         <strong>Max bid:</strong> ${fmtBid(state.max_bid)}<br/>
         <strong>Bidders:</strong> ${total}
@@ -469,7 +485,7 @@ function renderActionsPanel(state) {
       <div class="action-section" style="border-color:var(--gold)">
         <div class="action-section-title" style="color:var(--gold)">🏆 Winner</div>
         <div class="action-info">
-          <strong>${state.winner.name}</strong><br/>
+          <strong>${escapeHtml(state.winner.name)}</strong><br/>
           Winning bid: <strong style="color:var(--green)">${fmtBid(state.winner.bid)}</strong><br/>
           <span style="font-size:10px;color:var(--text-dim)">Commitment verified ✓</span>
         </div>
@@ -502,13 +518,13 @@ function buildLogEntry(type, title, data) {
   let dataLines = "";
   if (data && typeof data === "object") {
     dataLines = Object.entries(data)
-      .map(([k, v]) => `<code>${k}: ${v}</code>`)
+      .map(([k, v]) => `<code>${escapeHtml(k)}: ${escapeHtml(v)}</code>`)
       .join("");
   }
 
   div.innerHTML = `
     <div class="log-entry-header">
-      <span class="log-entry-title">${title}</span>
+      <span class="log-entry-title">${escapeHtml(title)}</span>
       <span class="log-entry-time">${timestamp()}</span>
     </div>
     ${dataLines}`;
