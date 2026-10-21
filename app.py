@@ -20,18 +20,123 @@ Endpoints:
   POST /api/prove    — generate and submit ZK range proof
   POST /api/reveal   — reveal bid + randomness, verify commitment
   POST /api/reset    — reset the auction session entirely
+
+Request rules:
+  Every POST must be sent as application/json (415 otherwise) with a JSON object
+  body (400 otherwise). Every error, including unknown routes and unexpected
+  server errors, is returned as {"success": false, "error": "<reason>"}.
 """
 
-from flask import Flask, jsonify, render_template, request
+import json
+import re
+
+from flask import Flask, abort, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 
 from crypto.auction import Auction, AuctionConfig
-from crypto.commitment import commit
+from crypto.commitment import MAX_BID, commit
 from crypto.zkp import prove_range
 
 app = Flask(__name__)
 
+MAX_BIDDERS = 10
+MAX_NAME_LENGTH = 100
+# 32 random bytes, hex-encoded: the only randomness format commit() produces.
+RANDOMNESS_HEX = re.compile(r"[0-9a-fA-F]{64}")
+
 # Single in-memory auction session (one game per server process)
 auction: Auction | None = None
+
+
+# ---------------------------------------------------------------------------
+# Errors and request validation
+# ---------------------------------------------------------------------------
+
+
+@app.errorhandler(HTTPException)
+def json_error(exc: HTTPException):
+    """
+    Render every HTTP error as the API's JSON error envelope.
+
+    This also covers unhandled exceptions, which Flask turns into a generic 500
+    whose description reveals nothing about the cause. Werkzeug's response is
+    reused so headers such as Allow (on 405) are kept.
+    """
+    response = exc.get_response()
+    response.data = json.dumps({"success": False, "error": exc.description})
+    response.content_type = "application/json"
+    return response
+
+
+@app.before_request
+def require_json_posts():
+    """
+    Reject state-changing requests that are not application/json.
+
+    Browsers send cross-site "simple" requests (HTML forms, text/plain bodies)
+    without a CORS preflight, so accepting them would let any website drive this
+    API from a visitor's browser (CSRF). A cross-origin application/json request
+    needs a preflight, which this app never approves.
+    """
+    if request.method == "POST" and not request.is_json:
+        abort(415, description="Request body must be JSON (Content-Type: application/json).")
+
+
+def _require_auction() -> Auction:
+    if auction is None:
+        abort(404, description="No auction created yet.")
+    return auction
+
+
+def _json_object() -> dict:
+    data = request.get_json(silent=True)  # None for malformed JSON and for `null`
+    if not isinstance(data, dict):
+        abort(400, description="Request body must be a JSON object.")
+    return data
+
+
+def _field(data: dict, name: str):
+    if name not in data:
+        abort(400, description=f"Missing field '{name}'.")
+    return data[name]
+
+
+def _int_field(data: dict, name: str) -> int:
+    """A JSON integer in [0, MAX_BID], the range a commitment can encode."""
+    value = _field(data, name)
+    # bool is a subclass of int and a float would be truncated silently, so
+    # only genuine JSON integers are accepted.
+    if isinstance(value, bool) or not isinstance(value, int):
+        abort(400, description=f"'{name}' must be an integer.")
+    if not 0 <= value <= MAX_BID:
+        abort(400, description=f"'{name}' must be between 0 and {MAX_BID}.")
+    return value
+
+
+def _str_field(data: dict, name: str) -> str:
+    value = _field(data, name)
+    if not isinstance(value, str):
+        abort(400, description=f"'{name}' must be a string.")
+    return value
+
+
+def _name(value, label: str) -> str:
+    """A display name: a non-blank string of bounded length, trimmed."""
+    if not isinstance(value, str) or not value.strip():
+        abort(400, description=f"{label} must be a non-empty string.")
+    name = value.strip()
+    if len(name) > MAX_NAME_LENGTH:
+        abort(400, description=f"{label} must be at most {MAX_NAME_LENGTH} characters.")
+    return name
+
+
+def _randomness_field(data: dict) -> str:
+    value = _str_field(data, "randomness_hex")
+    # Reject malformed input before it reaches the auction: a typo should be a
+    # 400 the client can retry, not a failed reveal that disqualifies the bidder.
+    if not RANDOMNESS_HEX.fullmatch(value):
+        abort(400, description="'randomness_hex' must be 64 hexadecimal characters.")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -72,24 +177,23 @@ def create_auction():
       }
     """
     global auction
-    data = request.get_json(force=True)
+    data = _json_object()
 
-    try:
-        item_name = str(data["item_name"]).strip()
-        min_bid = int(data["min_bid"])
-        max_bid = int(data["max_bid"])
-        bidder_names = [str(n).strip() for n in data["bidders"]]
-    except (KeyError, ValueError, TypeError) as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+    item_name = _name(_field(data, "item_name"), "'item_name'")
+    min_bid = _int_field(data, "min_bid")
+    max_bid = _int_field(data, "max_bid")
+    raw_names = _field(data, "bidders")
+    if not isinstance(raw_names, list):
+        abort(400, description="'bidders' must be a list of names.")
+    bidder_names = [_name(n, "Each bidder name") for n in raw_names]
 
-    if not item_name:
-        return jsonify({"success": False, "error": "item_name cannot be empty."}), 400
     if min_bid >= max_bid:
-        return jsonify({"success": False, "error": "min_bid must be less than max_bid."}), 400
-    if not bidder_names or len(bidder_names) < 2:
-        return jsonify({"success": False, "error": "At least 2 bidders are required."}), 400
-    if len(bidder_names) > 10:
-        return jsonify({"success": False, "error": "Maximum 10 bidders supported."}), 400
+        abort(400, description="min_bid must be less than max_bid.")
+    if not 2 <= len(bidder_names) <= MAX_BIDDERS:
+        abort(400, description=f"Between 2 and {MAX_BIDDERS} bidders are required.")
+    # Names are how results identify bidders, so they must be distinguishable.
+    if len({n.casefold() for n in bidder_names}) != len(bidder_names):
+        abort(400, description="Bidder names must be unique.")
 
     config = AuctionConfig(
         min_bid=min_bid,
@@ -122,10 +226,8 @@ def get_state():
     """
     Return the complete public state of the current auction.
     """
-    if auction is None:
-        return jsonify({"success": False, "error": "No auction created yet."}), 404
-
-    return jsonify({"success": True, **auction.get_public_state()})
+    current = _require_auction()
+    return jsonify({"success": True, **current.get_public_state()})
 
 
 # ---------------------------------------------------------------------------
@@ -153,32 +255,25 @@ def submit_commit():
         "phase":          str
       }
     """
-    if auction is None:
-        return jsonify({"success": False, "error": "No auction created yet."}), 404
+    current = _require_auction()
+    data = _json_object()
+    bidder_id = _str_field(data, "bidder_id")
+    bid = _int_field(data, "bid")
 
-    data = request.get_json(force=True)
-    try:
-        bidder_id = str(data["bidder_id"])
-        bid = int(data["bid"])
-    except (KeyError, ValueError, TypeError) as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
-
-    if bid < auction.config.min_bid or bid > auction.config.max_bid:
-        return jsonify(
-            {
-                "success": False,
-                "error": (
-                    f"Bid {bid} is outside the allowed range "
-                    f"[{auction.config.min_bid}, {auction.config.max_bid}]."
-                ),
-            }
-        ), 400
+    if not current.config.min_bid <= bid <= current.config.max_bid:
+        abort(
+            400,
+            description=(
+                f"Bid {bid} is outside the allowed range "
+                f"[{current.config.min_bid}, {current.config.max_bid}]."
+            ),
+        )
 
     try:
         c = commit(bid)
-        result = auction.submit_commitment(bidder_id, c.commitment_hex)
+        result = current.submit_commitment(bidder_id, c.commitment_hex)
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        abort(400, description=str(exc))
 
     return jsonify(
         {
@@ -216,34 +311,29 @@ def submit_prove():
         "phase":        str
       }
     """
-    if auction is None:
-        return jsonify({"success": False, "error": "No auction created yet."}), 404
+    current = _require_auction()
+    data = _json_object()
+    bidder_id = _str_field(data, "bidder_id")
+    bid = _int_field(data, "bid")
+    randomness_hex = _randomness_field(data)
 
-    data = request.get_json(force=True)
-    try:
-        bidder_id = str(data["bidder_id"])
-        bid = int(data["bid"])
-        randomness_hex = str(data["randomness_hex"])
-    except (KeyError, ValueError, TypeError) as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+    if bidder_id not in current.bidders:
+        abort(400, description=f"Unknown bidder_id '{bidder_id}'.")
 
-    if bidder_id not in auction.bidders:
-        return jsonify({"success": False, "error": f"Unknown bidder_id '{bidder_id}'."}), 400
-
-    commitment_hex = auction.bidders[bidder_id].commitment_hex
+    commitment_hex = current.bidders[bidder_id].commitment_hex
     if commitment_hex is None:
-        return jsonify({"success": False, "error": "Bidder has not committed yet."}), 400
+        abort(400, description="Bidder has not committed yet.")
 
     try:
         proof = prove_range(
             bid,
             randomness_hex,
             commitment_hex,
-            auction.config.min_bid,
-            auction.config.max_bid,
+            current.config.min_bid,
+            current.config.max_bid,
         )
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        abort(400, description=str(exc))
 
     proof_dict = {
         "commitment_hex": proof.commitment_hex,
@@ -258,9 +348,9 @@ def submit_prove():
     }
 
     try:
-        result = auction.submit_proof(bidder_id, proof_dict)
+        result = current.submit_proof(bidder_id, proof_dict)
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        abort(400, description=str(exc))
 
     return jsonify(
         {
@@ -294,21 +384,16 @@ def submit_reveal():
         "winner":   { "bidder_id", "name", "bid", "commitment_hex" } | null
       }
     """
-    if auction is None:
-        return jsonify({"success": False, "error": "No auction created yet."}), 404
-
-    data = request.get_json(force=True)
-    try:
-        bidder_id = str(data["bidder_id"])
-        bid = int(data["bid"])
-        randomness_hex = str(data["randomness_hex"])
-    except (KeyError, ValueError, TypeError) as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+    current = _require_auction()
+    data = _json_object()
+    bidder_id = _str_field(data, "bidder_id")
+    bid = _int_field(data, "bid")
+    randomness_hex = _randomness_field(data)
 
     try:
-        result = auction.submit_reveal(bidder_id, bid, randomness_hex)
+        result = current.submit_reveal(bidder_id, bid, randomness_hex)
     except ValueError as exc:
-        return jsonify({"success": False, "error": str(exc)}), 400
+        abort(400, description=str(exc))
 
     return jsonify(
         {

@@ -25,6 +25,10 @@ import os
 import struct
 from dataclasses import dataclass
 
+# Largest bid the commitment can encode: bids are packed as 8-byte big-endian
+# unsigned integers (struct format ">Q").
+MAX_BID = 2**64 - 1
+
 
 @dataclass
 class Commitment:
@@ -54,7 +58,7 @@ def commit(bid: int) -> Commitment:
     """
     if bid < 0:
         raise ValueError(f"Bid must be non-negative, got {bid}")
-    if bid > 0xFFFFFFFFFFFFFFFF:
+    if bid > MAX_BID:
         raise ValueError(f"Bid exceeds uint64 maximum, got {bid}")
 
     randomness = os.urandom(32)
@@ -83,7 +87,7 @@ def verify(bid: int, randomness_hex: str, commitment_hex: str) -> bool:
         True if the commitment is valid, False otherwise.
     """
     try:
-        if bid < 0 or bid > 0xFFFFFFFFFFFFFFFF:
+        if bid < 0 or bid > MAX_BID:
             return False
         randomness = bytes.fromhex(randomness_hex)
         bid_bytes = struct.pack(">Q", bid)
