@@ -10,6 +10,12 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > Built as a portfolio project to demonstrate applied cryptography concepts
 > using only Python's standard library (`hashlib`, `os`, `struct`) and Flask.
 
+> [!WARNING]
+> **Work in progress.** This started as a prototype and is being hardened step
+> by step. Two of its headline guarantees do **not** hold yet: the server sees
+> every bid in plaintext, and the range proof can be forged. See
+> [Limitations](#limitations) for the current status.
+
 ---
 
 ## Demo
@@ -20,25 +26,30 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 ## What This Demonstrates
 
-| Property | Mechanism | Guarantee |
-|---|---|---|
-| **Hiding** | SHA-256 commitment `C = SHA256(bid ‖ r)` | Auctioneer cannot learn bids before reveal |
-| **Binding** | Collision resistance of SHA-256 | Bidders cannot change their bid after committing |
-| **Soundness** | ZK range proof (Sigma + Fiat-Shamir) | Bids provably within `[min, max]` without disclosure |
-| **Verifiability** | Commitment opening at reveal | Anyone can audit the final result |
+| Property | Mechanism | Intended guarantee | Status |
+|---|---|---|---|
+| **Hiding** | SHA-256 commitment `C = SHA256(bid ‖ r)` | Auctioneer cannot learn bids before reveal | **Not yet**: the server receives the bid in plaintext |
+| **Binding** | Collision resistance of SHA-256 | Bidders cannot change their bid after committing | Holds |
+| **Soundness** | ZK range proof (Sigma + Fiat-Shamir) | Bids provably within `[min, max]` without disclosure | **Not yet**: proofs can be forged |
+| **Verifiability** | Commitment opening at reveal | Anyone can audit the final result | Holds: openings are public after the reveal |
 
 ---
 
 ## Security Model
 
-**Honest-but-curious (semi-honest)**: the auctioneer follows the protocol but tries
-to learn bids before the reveal phase. The construction prevents this:
+**Target model, honest-but-curious (semi-honest)**: the auctioneer follows the
+protocol but tries to learn bids before the reveal phase. The protocol is
+designed so that:
 
 ```
 Phase 1 — COMMIT:   auctioneer sees only C = SHA256(bid ‖ r)
 Phase 2 — ZK PROVE: auctioneer knows bid ∈ [min, max] without seeing bid
 Phase 3 — REVEAL:   auctioneer verifies SHA256(bid ‖ r) == C
 ```
+
+**The current implementation does not meet this model yet.** The browser sends
+the bid to the server, which computes the commitment and the proof itself, so
+the auctioneer learns every bid in phase 1.
 
 Bidders are also honest-but-curious among themselves — they see each other's
 commitments but not the underlying bid values until phase 3.
@@ -64,6 +75,9 @@ PHASE 3 — REVEAL
   Auctioneer verifies: SHA256(bid_i ‖ r_i) == C_i
   Winner = argmax(verified bid_i)
 ```
+
+This is the intended protocol. In the current implementation the server
+performs the bidder's steps in phases 1 and 2 (see [Limitations](#limitations)).
 
 ---
 
@@ -116,7 +130,7 @@ crypto-auction/
 ├── crypto/
 │   ├── __init__.py
 │   ├── commitment.py         # SHA-256 commitment scheme
-│   ├── zkp.py                # ZK range proof (Sigma + Fiat-Shamir)
+│   ├── zkp.py                # Range proof (Sigma + Fiat-Shamir), currently unsound
 │   └── auction.py            # State machine + auction logic
 ├── docs/
 │   └── demo.gif              # Demo GIF (shown in README)
@@ -126,11 +140,16 @@ crypto-auction/
 ├── templates/
 │   └── index.html            # Single page, 3-panel layout
 ├── tests/
-│   ├── test_commitment.py    # 13 commitment tests
-│   ├── test_zkp.py           # 18 ZK proof tests
-│   └── test_auction.py       # 22 state machine tests
+│   ├── support.py            # Shared helpers (known_bug marker, proof forger)
+│   ├── test_commitment.py    # Commitment scheme
+│   ├── test_zkp.py           # Range proof, incl. soundness
+│   ├── test_auction.py       # State machine and winner selection
+│   ├── test_api.py           # REST API via Flask's test client
+│   └── test_app.py           # Server entry point (debug mode)
 ├── app.py                    # Flask app — all REST routes
-└── requirements.txt          # flask only
+├── pyproject.toml            # Tool configuration (ruff, pytest, coverage)
+├── requirements.txt          # Runtime dependencies
+└── requirements-dev.txt      # Test and lint tooling
 ```
 
 ---
@@ -140,7 +159,7 @@ crypto-auction/
 | Primitive | Implementation | Purpose |
 |---|---|---|
 | Commitment | `SHA-256(bid_bytes ‖ randomness)` | Hiding + Binding |
-| ZK Range Proof | Sigma protocol + Fiat-Shamir transform | Validity without disclosure |
+| ZK Range Proof | Sigma protocol + Fiat-Shamir transform | Validity without disclosure (currently unsound, see below) |
 | Challenge | `SHA-256(commitment ‖ announcement)` | Non-interactive (NIZK) |
 | Reveal | Commitment opening | Auditability |
 
@@ -165,19 +184,33 @@ Each uses a fresh commitment to the gap value, a Fiat-Shamir challenge
 
 The verifier checks:
 1. Challenges are correctly re-derived (Fiat-Shamir consistency).
-2. Responses are non-negative (witnesses to non-negative gap values).
+2. Responses are non-negative.
+
+**This construction is not sound.** Nothing links `C_gap` to the committed bid,
+and `z` is a sum of non-negative numbers, so check 2 always passes. Anyone can
+build an accepted proof from random bytes without knowing the bid (see
+`TestSoundness` in `tests/test_zkp.py`). The challenge also omits `min` and
+`max`, and the responses leak about half of the bits of `r`. Because SHA-256
+commitments have no algebraic structure, this cannot be patched in place; the
+plan is to replace it with Pedersen commitments and a bit-decomposition range
+proof.
 
 ---
 
-## Limitations (Intentional for Demo)
+## Limitations
 
-- **Randomness server-side**: In production, clients generate `randomness_hex`
-  locally in the browser and compute the commitment client-side. The server
-  never sees it. Here the server generates and returns it once for simplicity.
-- **Simplified ZK proof**: A Sigma-protocol construction, not a full
-  Bulletproof or Groth16 SNARK. Suitable for demo; not production-grade.
+- **Bids pass through the server**: the browser sends the bid in plaintext to
+  `/api/commit`, and the server computes the commitment and, later, the range
+  proof. The auctioneer therefore learns every bid in phase 1. The target
+  design computes both in the browser so the server never sees the bid.
+- **Unsound range proof**: see [ZK Range Proof](#zk-range-proof) above.
+- **No authentication**: any client can act as any bidder or reset the auction.
+- **No deadlines**: a bidder who never commits or reveals stalls the auction.
 - **Single-server model**: Production would use MPC for the auctioneer role.
 - **In-memory state**: No database; a server restart resets the auction.
+
+Known bugs are tracked as `known_bug` tests (see the development setup above);
+`pytest -rx` lists them with their reasons.
 
 ---
 
