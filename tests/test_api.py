@@ -5,6 +5,7 @@ from unittest import mock
 
 import app as app_module
 from crypto.commitment import verify
+from tests.support import known_bug
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
@@ -49,6 +50,7 @@ class ApiTestCase(unittest.TestCase):
 
     def assert_error(self, resp, status=400):
         """Errors use the JSON envelope {"success": false, "error": "<reason>"}."""
+        self.assertTrue(resp.is_json, f"expected a JSON error, got {resp.content_type}")
         self.assertEqual(resp.status_code, status, resp.get_json())
         body = resp.get_json()
         self.assertIs(body["success"], False)
@@ -143,6 +145,27 @@ class TestCreate(ApiTestCase):
         self.assertEqual(state["state"], "open")
         self.assertTrue(all(b["commitment_hex"] is None for b in state["bidders"]))
 
+    @known_bug("bounds above 2**64 - 1 are accepted, then /api/prove crashes packing them")
+    def test_rejects_bounds_that_do_not_fit_uint64(self):
+        self.assert_error(self.create(max_bid=2**64))
+
+    @known_bug("a negative min_bid is accepted, but commitments only encode bids >= 0")
+    def test_rejects_negative_min_bid(self):
+        self.assert_error(self.create(min_bid=-50))
+
+    @known_bug("float and bool bounds are silently coerced to int (100.5 -> 100, true -> 1)")
+    def test_rejects_float_and_bool_bounds(self):
+        self.assert_error(self.create(min_bid=100.5))
+        self.assert_error(self.create(min_bid=True))
+
+    @known_bug("blank bidder names are accepted")
+    def test_rejects_blank_bidder_names(self):
+        self.assert_error(self.create(bidders=["Alice", "   "]))
+
+    @known_bug("duplicate bidder names are accepted, so results cannot tell bidders apart")
+    def test_rejects_duplicate_bidder_names(self):
+        self.assert_error(self.create(bidders=["Alice", "Alice"]))
+
 
 class TestState(ApiTestCase):
     def test_initial_state(self):
@@ -196,6 +219,12 @@ class TestCommit(ApiTestCase):
     def test_rejects_malformed_payload(self):
         self.assert_error(self.post("/api/commit", bidder_id="bidder_0"))
         self.assert_error(self.post("/api/commit", bidder_id="bidder_0", bid="lots"))
+
+    @known_bug("float and bool bids are silently coerced to int (1500.9 -> 1500, true -> 1)")
+    def test_rejects_float_and_bool_bids(self):
+        self.create(min_bid=0)  # so that true (== 1) would be inside the range
+        self.assert_error(self.post("/api/commit", bidder_id="bidder_0", bid=1500.9))
+        self.assert_error(self.post("/api/commit", bidder_id="bidder_1", bid=True))
 
     def test_phase_advances_once_everyone_committed(self):
         self.commit_all({"bidder_0": 1200, "bidder_1": 1800})
@@ -251,6 +280,14 @@ class TestProve(ApiTestCase):
         self.prove_all(self.commit_all())
         self.assertEqual(self.state()["state"], "proved")
 
+    @known_bug("proof responses are ~380-bit JSON numbers; JavaScript loses precision above 2**53")
+    def test_proof_numbers_are_exact_in_javascript(self):
+        secrets = self.commit_all()
+        data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
+        for field, value in data["proof_public"].items():
+            if isinstance(value, int):
+                self.assertLessEqual(abs(value), 2**53 - 1, field)
+
 
 class TestReveal(ApiTestCase):
     def setUp(self):
@@ -301,6 +338,34 @@ class TestReveal(ApiTestCase):
         self.prove_all(secrets)
         self.assert_ok(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
         self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
+
+
+class TestRequestFormat(ApiTestCase):
+    @known_bug("a JSON null body leaks Python internals: 'NoneType' object is not subscriptable")
+    def test_null_body_gets_a_clear_error(self):
+        resp = self.client.post("/api/create", data="null", content_type="application/json")
+        self.assertNotIn("NoneType", self.assert_error(resp)["error"])
+
+    @known_bug("malformed JSON gets Flask's HTML error page instead of the JSON error envelope")
+    def test_malformed_json_gets_a_json_error(self):
+        resp = self.client.post("/api/create", data="{not json", content_type="application/json")
+        self.assert_error(resp)
+
+    # Browsers send text/plain POSTs to any origin without a CORS preflight, so
+    # accepting them lets any website drive this API from a visitor's browser.
+    @known_bug("get_json(force=True) parses text/plain bodies, enabling cross-site requests")
+    def test_commit_rejects_non_json_content_type(self):
+        self.create()
+        body = '{"bidder_id": "bidder_0", "bid": 1200}'
+        resp = self.client.post("/api/commit", data=body, content_type="text/plain")
+        self.assert_error(resp, 415)
+
+    @known_bug("/api/reset accepts any POST, so a cross-site request can wipe the auction")
+    def test_reset_rejects_non_json_content_type(self):
+        self.create()
+        resp = self.client.post("/api/reset", data="", content_type="text/plain")
+        self.assert_error(resp, 415)
+        self.assert_ok(self.client.get("/api/state"))
 
 
 class TestReset(ApiTestCase):

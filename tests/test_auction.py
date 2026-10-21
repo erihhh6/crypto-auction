@@ -1,10 +1,12 @@
 """Tests for crypto/auction.py — state machine and auction logic."""
 
 import unittest
+from dataclasses import asdict
 
 from crypto.auction import Auction, AuctionConfig, AuctionState
 from crypto.commitment import commit
 from crypto.zkp import prove_range
+from tests.support import forged_range_proof, known_bug
 
 
 def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
@@ -141,6 +143,20 @@ class TestPhase2Prove(unittest.TestCase):
         result = auction.submit_proof("bidder_0", {"bad": "data"})
         self.assertFalse(result["proof_valid"])
 
+    @known_bug("submit_proof never checks that the proof is about this bidder's commitment")
+    def test_proof_for_another_commitment_is_invalid(self):
+        auction, _ = self._committed_auction()
+        other = commit(2000)
+        pd = _proof_dict(2000, other.randomness_hex, other.commitment_hex, 100, 5000)
+        self.assertFalse(auction.submit_proof("bidder_0", pd)["proof_valid"])
+
+    @known_bug("submit_proof never checks that the proof's range is the auction's range")
+    def test_proof_for_another_range_is_invalid(self):
+        auction, secrets = self._committed_auction()
+        s = secrets["bidder_0"]
+        pd = _proof_dict(s["bid"], s["randomness_hex"], s["commitment_hex"], 0, 10**9)
+        self.assertFalse(auction.submit_proof("bidder_0", pd)["proof_valid"])
+
 
 class TestPhase3Reveal(unittest.TestCase):
     def test_highest_bid_wins(self):
@@ -212,6 +228,46 @@ class TestPhase3Reveal(unittest.TestCase):
         auction = run_full_auction({"Alice": 1000, "Bob": 1000})
         winner = auction.get_winner()
         self.assertEqual(winner["name"], "Alice")
+
+    @known_bug("ties go to the earlier name in the bidder list, not the earliest commitment")
+    def test_tie_won_by_earliest_commitment(self):
+        auction = make_auction(["Alice", "Bob"])
+        alice, bob = commit(1000), commit(1000)
+        auction.submit_commitment("bidder_1", bob.commitment_hex)  # Bob commits first
+        auction.submit_commitment("bidder_0", alice.commitment_hex)
+        for bidder_id, c in (("bidder_0", alice), ("bidder_1", bob)):
+            pd = _proof_dict(1000, c.randomness_hex, c.commitment_hex, 100, 5000)
+            auction.submit_proof(bidder_id, pd)
+        for bidder_id, c in (("bidder_0", alice), ("bidder_1", bob)):
+            auction.submit_reveal(bidder_id, 1000, c.randomness_hex)
+        self.assertEqual(auction.get_winner()["name"], "Bob")
+
+    @known_bug("get_winner ignores proof_valid, so a bidder whose proof failed can still win")
+    def test_bidder_with_invalid_proof_cannot_win(self):
+        auction = make_auction(["Alice", "Bob"])
+        alice, bob = commit(1000), commit(3000)
+        auction.submit_commitment("bidder_0", alice.commitment_hex)
+        auction.submit_commitment("bidder_1", bob.commitment_hex)
+        pd = _proof_dict(1000, alice.randomness_hex, alice.commitment_hex, 100, 5000)
+        auction.submit_proof("bidder_0", pd)
+        auction.submit_proof("bidder_1", {"bad": "data"})  # recorded as proof_valid=False
+        auction.submit_reveal("bidder_0", 1000, alice.randomness_hex)
+        auction.submit_reveal("bidder_1", 3000, bob.randomness_hex)
+        self.assertEqual(auction.get_winner()["name"], "Alice")
+
+    @known_bug("a bid outside [min, max] can win: proofs are forgeable and reveal never rechecks")
+    def test_out_of_range_bid_cannot_win(self):
+        auction = make_auction(["Alice", "Mallory"])
+        alice, mallory = commit(4000), commit(999_999)
+        auction.submit_commitment("bidder_0", alice.commitment_hex)
+        auction.submit_commitment("bidder_1", mallory.commitment_hex)
+        pd = _proof_dict(4000, alice.randomness_hex, alice.commitment_hex, 100, 5000)
+        auction.submit_proof("bidder_0", pd)
+        forged = forged_range_proof(mallory.commitment_hex, 100, 5000)
+        auction.submit_proof("bidder_1", asdict(forged))
+        auction.submit_reveal("bidder_0", 4000, alice.randomness_hex)
+        auction.submit_reveal("bidder_1", 999_999, mallory.randomness_hex)
+        self.assertEqual(auction.get_winner()["name"], "Alice")
 
 
 class TestPublicState(unittest.TestCase):

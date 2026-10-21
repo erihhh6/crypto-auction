@@ -1,9 +1,11 @@
 """Tests for crypto/zkp.py"""
 
+import os
 import unittest
 
 from crypto.commitment import commit
 from crypto.zkp import _fiat_shamir_challenge, prove_range, verify_range_proof
+from tests.support import forged_range_proof, known_bug
 
 
 class TestFiatShamirChallenge(unittest.TestCase):
@@ -105,6 +107,28 @@ class TestVerifyRangeProof(unittest.TestCase):
     def test_tampered_commitment_fails(self):
         proof = self._valid_proof()
         proof.commitment_hex = "cc" * 32
+        self.assertFalse(verify_range_proof(proof))
+
+
+class TestSoundness(unittest.TestCase):
+    """A proof must only convince the verifier if the prover holds a valid opening."""
+
+    @known_bug("the verifier never links C_low/C_high to the commitment, so proofs can be forged")
+    def test_forged_proof_is_rejected(self):
+        c = commit(999_999)  # far outside [100, 5000]; the forger never uses the opening
+        self.assertFalse(verify_range_proof(forged_range_proof(c.commitment_hex, 100, 5000)))
+
+    @known_bug("prove_range never checks that (bid, randomness) opens the commitment")
+    def test_prover_rejects_an_opening_that_does_not_match(self):
+        c = commit(1000)
+        with self.assertRaises(ValueError):
+            prove_range(4000, os.urandom(32).hex(), c.commitment_hex, 100, 5000)
+
+    @known_bug("the Fiat-Shamir challenge omits min_bid/max_bid, so the range can be swapped")
+    def test_proof_is_bound_to_its_range(self):
+        c = commit(1500)
+        proof = prove_range(1500, c.randomness_hex, c.commitment_hex, 100, 5000)
+        proof.min_bid, proof.max_bid = 0, 10  # 1500 lies outside the relabelled range
         self.assertFalse(verify_range_proof(proof))
 
 

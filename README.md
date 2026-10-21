@@ -99,6 +99,11 @@ ruff check .                # lint
 ruff format --check .       # formatting
 ```
 
+Known, not-yet-fixed bugs are recorded as tests that assert the correct
+behaviour, marked `@known_bug(...)` (a strict `xfail`, see `tests/support.py`).
+They show up as `XFAIL` with their reason; the commit that fixes a bug
+removes its marker, and the suite fails if a marker outlives its bug.
+
 ---
 
 ## Project Structure
