@@ -215,7 +215,8 @@ class Auction:
 
         Bidders with a failed commitment verification are marked as cheaters and
         excluded from the winner determination. Bidders whose range proof was
-        invalid may still reveal, so the auction can finish, but cannot win.
+        invalid, or whose revealed bid lies outside [min_bid, max_bid], may still
+        reveal, so the auction can finish, but cannot win.
 
         Advances to FINISHED once all bidders have revealed.
 
@@ -257,15 +258,19 @@ class Auction:
 
         winner = self.get_winner() if self.state == AuctionState.FINISHED else None
 
+        if not is_verified:
+            outcome = "INVALID — marked as cheater"
+        elif not self._in_range(bid):
+            outcome = "verified, but outside the allowed range — disqualified"
+        else:
+            outcome = "verified"
+
         return {
             "success": True,
             "verified": is_verified,
             "phase": self.state.value,
             "bidder_id": bidder_id,
-            "message": (
-                f"{bidder.name}'s reveal is "
-                f"{'verified' if is_verified else 'INVALID — marked as cheater'}."
-            ),
+            "message": f"{bidder.name}'s reveal is {outcome}.",
             "winner": winner,
         }
 
@@ -308,8 +313,9 @@ class Auction:
         Determine and return the auction winner.
 
         Only valid after REVEALED state. The winner is the bidder with the highest
-        bid among eligible bidders: those whose range proof was valid and whose
-        reveal opened their commitment. In case of a tie, the bidder who appears
+        bid among eligible bidders: those whose range proof was valid, whose
+        reveal opened their commitment, and whose revealed bid lies within
+        [min_bid, max_bid]. In case of a tie, the bidder who appears
         earlier in the original bidder list wins (implicit tie-breaking by commit
         order).
 
@@ -320,15 +326,18 @@ class Auction:
         if self.state not in (AuctionState.REVEALED, AuctionState.FINISHED):
             return None
 
-        # A bid only counts if both checks passed: the range proof vouches that
+        # A bid only counts if every check passed: the range proof vouches that
         # the committed bid lies in [min, max], and the opening shows the
-        # revealed bid is the committed one. Either alone is not enough.
+        # revealed bid is the committed one. The range is checked again on the
+        # revealed bid as defence in depth: the current range proof can be
+        # forged, and once a bid is revealed the check costs nothing.
         eligible = [
             b
             for b in self.bidders.values()
             if b.proof_valid is True
             and b.commitment_verified is True
             and b.revealed_bid is not None
+            and self._in_range(b.revealed_bid)
         ]
 
         if not eligible:
@@ -341,6 +350,9 @@ class Auction:
             "bid": winner.revealed_bid,
             "commitment_hex": winner.commitment_hex,
         }
+
+    def _in_range(self, bid: int) -> bool:
+        return self.config.min_bid <= bid <= self.config.max_bid
 
     def can_advance_phase(self) -> bool:
         """

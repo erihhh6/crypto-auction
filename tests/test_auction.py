@@ -268,7 +268,6 @@ class TestPhase3Reveal(unittest.TestCase):
         self.assertIsNone(result["winner"])
         self.assertIsNone(auction.get_public_state()["winner"])
 
-    @known_bug("a bid outside [min, max] can win: proofs are forgeable and reveal never rechecks")
     def test_out_of_range_bid_cannot_win(self):
         auction = make_auction(["Alice", "Mallory"])
         alice, mallory = commit(4000), commit(999_999)
