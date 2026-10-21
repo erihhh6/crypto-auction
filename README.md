@@ -75,6 +75,13 @@ python app.py
 # Open http://localhost:5000
 ```
 
+For local development with auto-reload and the interactive debugger
+(never enable this on a reachable host):
+
+```bash
+flask --app app run --debug
+```
+
 Or test the crypto modules independently:
 
 ```bash

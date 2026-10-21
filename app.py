@@ -343,4 +343,7 @@ def reset():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # Debug mode is opt-in via FLASK_DEBUG=1 (read by app.run) or
+    # `flask --app app run --debug`: the Werkzeug debugger serves an
+    # interactive Python console, so it must never be on by default.
+    app.run(port=5000)
