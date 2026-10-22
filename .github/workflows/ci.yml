@@ -93,7 +93,7 @@ jobs:
           --cov-report=markdown-append:"$GITHUB_STEP_SUMMARY"
 
   frontend:
-    name: Frontend lint and tests
+    name: Frontend lint, format and tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -115,6 +115,10 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      # Prettier: JavaScript, CSS, HTML, JSON and YAML (see .prettierignore).
+      - name: Check formatting
+        run: npm run format:check
 
       # Node's built-in test runner (the script in package.json).
       - name: Run frontend tests

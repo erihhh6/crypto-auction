@@ -138,7 +138,7 @@ async function proveNonNegative(value, blinding, bits, context) {
   const blindings = Array.from({ length: bits - 1 }, randomScalar);
   const partial = blindings.reduce((sum, b, i) => sum + (b << BigInt(i)), 0n) % N;
   const inverse = etc.invert(1n << BigInt(bits - 1), N);
-  blindings.push((((blinding - partial) % N) + N) % N * inverse % N);
+  blindings.push((((((blinding - partial) % N) + N) % N) * inverse) % N);
 
   const bitCommitments = [];
   const bitProofs = [];

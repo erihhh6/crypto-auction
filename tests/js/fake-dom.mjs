@@ -33,7 +33,9 @@ class FakeClassList {
     this.element.className = [...new Set([...this.names(), ...names])].join(" ");
   }
   remove(...names) {
-    this.element.className = this.names().filter((n) => !names.includes(n)).join(" ");
+    this.element.className = this.names()
+      .filter((n) => !names.includes(n))
+      .join(" ");
   }
   toggle(name, force = !this.contains(name)) {
     if (force) this.add(name);

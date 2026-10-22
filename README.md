@@ -171,6 +171,7 @@ python -m mypy              # strict type check of src/ and examples/
 
 npm ci                      # JavaScript tooling, exactly as package-lock.json records it
 npm run lint                # ESLint over the page's scripts and the JS tests
+npm run format:check        # Prettier: JS, CSS, HTML, JSON, YAML (npm run format fixes)
 npm test                    # frontend tests: rendering, request flow, browser crypto
 ```
 
@@ -259,9 +260,10 @@ crypto-auction/
 ├── pyproject.toml            # Package metadata and tool configuration
 ├── requirements.txt          # Installs the package and its dependencies
 ├── requirements-dev.txt      # Test, lint and type-check tooling
-├── package.json              # JavaScript tooling (ESLint) and the vendored library's version
+├── package.json              # JavaScript tooling (ESLint, Prettier) and the vendored library's version
 ├── package-lock.json         # Exact versions and hashes of the npm packages
 ├── eslint.config.js          # ESLint rules, per script kind (page script, module, Node)
+├── prettier.config.js        # Prettier settings; .prettierignore lists what it leaves alone
 ├── .npmrc                    # No install scripts; exact versions
 └── .gitattributes            # Vendored code checked out byte for byte (no CRLF conversion)
 ```

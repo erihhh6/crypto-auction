@@ -1,0 +1,11 @@
+# Prettier also skips what .gitignore lists.
+
+# Third-party code, copied verbatim (see its README).
+src/crypto_auction/web/static/vendor/
+
+# Written by npm.
+package-lock.json
+
+# Markdown is wrapped by hand. Prettier would pad every table row to the
+# widest cell, so that editing one cell rewrites the whole table.
+*.md

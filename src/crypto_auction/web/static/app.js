@@ -8,10 +8,10 @@
 // holds all of them.
 // ---------------------------------------------------------------------------
 const localState = {
-  auction: null,           // config returned by /api/create (includes auction_id)
-  serverState: null,       // latest public state from /api/state
-  joinTokens: {},          // { bidder_id: join_token }, from /api/create
-  bidderSecrets: {},       // { bidder_id: { bid: int, randomness_hex: str, commitment_hex: str } }
+  auction: null, // config returned by /api/create (includes auction_id)
+  serverState: null, // latest public state from /api/state
+  joinTokens: {}, // { bidder_id: join_token }, from /api/create
+  bidderSecrets: {}, // { bidder_id: { bid: int, randomness_hex: str, commitment_hex: str } }
 };
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ function addBidderInput() {
 
 function removeBidderInput(btn) {
   const container = document.getElementById("bidder-inputs");
-  if (container.children.length <= 2) return;  // minimum 2 bidders
+  if (container.children.length <= 2) return; // minimum 2 bidders
   btn.closest(".bidder-input-row").remove();
 }
 
@@ -204,27 +204,42 @@ function readSetupForm() {
   document.getElementById("setup-error").hidden = true;
 
   const itemName = document.getElementById("item-name").value.trim();
-  const minBid   = parseInt(document.getElementById("min-bid").value, 10);
-  const maxBid   = parseInt(document.getElementById("max-bid").value, 10);
-  const minutes  = parseInt(document.getElementById("phase-minutes").value, 10);
-  const names    = [...document.querySelectorAll(".bidder-name-input")]
-                     .map(i => i.value.trim())
-                     .filter(Boolean);
+  const minBid = parseInt(document.getElementById("min-bid").value, 10);
+  const maxBid = parseInt(document.getElementById("max-bid").value, 10);
+  const minutes = parseInt(document.getElementById("phase-minutes").value, 10);
+  const names = [...document.querySelectorAll(".bidder-name-input")]
+    .map((i) => i.value.trim())
+    .filter(Boolean);
 
-  if (!itemName)            { showSetupError("Item name is required."); return null; }
-  if (isNaN(minBid) || isNaN(maxBid)) { showSetupError("Bid bounds must be numbers."); return null; }
-  if (minBid >= maxBid)     { showSetupError("Min bid must be less than max bid."); return null; }
-  if (names.length < 2)     { showSetupError("At least 2 bidder names are required."); return null; }
-  if (isNaN(minutes) || minutes < 1) { showSetupError("Each phase needs at least 1 minute."); return null; }
+  if (!itemName) {
+    showSetupError("Item name is required.");
+    return null;
+  }
+  if (isNaN(minBid) || isNaN(maxBid)) {
+    showSetupError("Bid bounds must be numbers.");
+    return null;
+  }
+  if (minBid >= maxBid) {
+    showSetupError("Min bid must be less than max bid.");
+    return null;
+  }
+  if (names.length < 2) {
+    showSetupError("At least 2 bidder names are required.");
+    return null;
+  }
+  if (isNaN(minutes) || minutes < 1) {
+    showSetupError("Each phase needs at least 1 minute.");
+    return null;
+  }
 
   const seconds = minutes * 60;
   return {
-    item_name:      itemName,
-    min_bid:        minBid,
-    max_bid:        maxBid,
-    bidders:        names,
+    item_name: itemName,
+    min_bid: minBid,
+    max_bid: maxBid,
+    bidders: names,
     commit_seconds: seconds,
-    prove_seconds:  seconds,
+    prove_seconds: seconds,
     reveal_seconds: seconds,
   };
 }
@@ -247,13 +262,16 @@ async function createAuction() {
     addPublicLogEntry("Auction created", {
       item: data.item_name,
       range: `${fmtBid(data.min_bid)} – ${fmtBid(data.max_bid)}`,
-      bidders: data.bidders.map(b => b.name).join(", "),
+      bidders: data.bidders.map((b) => b.name).join(", "),
     });
   } catch (err) {
     showSetupError(err.message);
   } finally {
     const btn = document.getElementById("btn-create");
-    if (btn) { btn.disabled = false; btn.textContent = "Start Auction →"; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Start Auction →";
+    }
   }
 }
 
@@ -269,7 +287,7 @@ function showSetupError(msg) {
  */
 function rememberAuction(data) {
   localState.auction = data;
-  localState.joinTokens = Object.fromEntries(data.bidders.map(b => [b.bidder_id, b.join_token]));
+  localState.joinTokens = Object.fromEntries(data.bidders.map((b) => [b.bidder_id, b.join_token]));
   localState.bidderSecrets = {};
   // Bidder ids repeat across auctions: start from fresh cards, not the last
   // auction's (with whatever was typed into them).
@@ -295,10 +313,10 @@ function showAuctionView(itemName) {
 function enterAsBidder(state, bidderId, name, joinToken) {
   rememberAuction({
     auction_id: state.auction_id,
-    item_name:  state.item_name,
-    min_bid:    state.min_bid,
-    max_bid:    state.max_bid,
-    bidders:    [{ bidder_id: bidderId, name, join_token: joinToken }],
+    item_name: state.item_name,
+    min_bid: state.min_bid,
+    max_bid: state.max_bid,
+    bidders: [{ bidder_id: bidderId, name, join_token: joinToken }],
   });
   showAuctionView(`${state.item_name} — bidding as ${name}`);
 }
@@ -332,9 +350,12 @@ function renderJoinLinks(data) {
   if (box.hidden) return;
   box.append(
     el("div", "action-section-title", "Join links"),
-    el("div", "action-info",
-       "Send each bidder their own link to bid from their own device. Keep the links " +
-       "private: whoever has one can act as that bidder."),
+    el(
+      "div",
+      "action-info",
+      "Send each bidder their own link to bid from their own device. Keep the links " +
+        "private: whoever has one can act as that bidder.",
+    ),
   );
   for (const b of data.bidders) {
     const field = el("input", "join-link-field");
@@ -395,15 +416,15 @@ const RECEIPT_VERSION = 1;
 function makeReceipt(bidderId) {
   const secret = localState.bidderSecrets[bidderId];
   return {
-    type:           RECEIPT_TYPE,
-    version:        RECEIPT_VERSION,
-    note:           "Keep this file private until the reveal: it holds your bid and secrets.",
-    auction_id:     localState.auction.auction_id,
-    item_name:      localState.auction.item_name,
-    bidder_id:      bidderId,
-    bidder_name:    getBidderName(bidderId),
-    join_token:     localState.joinTokens[bidderId],
-    bid:            secret.bid,
+    type: RECEIPT_TYPE,
+    version: RECEIPT_VERSION,
+    note: "Keep this file private until the reveal: it holds your bid and secrets.",
+    auction_id: localState.auction.auction_id,
+    item_name: localState.auction.item_name,
+    bidder_id: bidderId,
+    bidder_name: getBidderName(bidderId),
+    join_token: localState.joinTokens[bidderId],
+    bid: secret.bid,
     randomness_hex: secret.randomness_hex,
     commitment_hex: secret.commitment_hex,
   };
@@ -437,20 +458,27 @@ function parseReceipt(text) {
   }
   if (receipt?.type !== RECEIPT_TYPE) throw new Error("This file is not an auction receipt.");
   if (receipt.version !== RECEIPT_VERSION) {
-    throw new Error(`This receipt has version ${receipt.version}; this page reads version ${RECEIPT_VERSION}.`);
+    throw new Error(
+      `This receipt has version ${receipt.version}; this page reads version ${RECEIPT_VERSION}.`,
+    );
   }
   const wellFormed =
     /^[0-9a-f]{32}$/.test(receipt.auction_id) &&
     typeof receipt.bidder_id === "string" &&
     typeof receipt.join_token === "string" &&
-    Number.isSafeInteger(receipt.bid) && receipt.bid >= 0 &&
+    Number.isSafeInteger(receipt.bid) &&
+    receipt.bid >= 0 &&
     /^[0-9a-f]{64}$/.test(receipt.randomness_hex) &&
     /^0[23][0-9a-f]{64}$/.test(receipt.commitment_hex);
   if (!wellFormed) throw new Error("This receipt is damaged: a field is missing or malformed.");
   // A reveal that does not open the commitment marks the bidder a cheater.
-  if (!window.auctionCrypto.opensCommitment(
-    receipt.commitment_hex, BigInt(receipt.bid), receipt.randomness_hex,
-  )) {
+  if (
+    !window.auctionCrypto.opensCommitment(
+      receipt.commitment_hex,
+      BigInt(receipt.bid),
+      receipt.randomness_hex,
+    )
+  ) {
     throw new Error("This receipt is damaged: its bid and secret do not open its commitment.");
   }
   return receipt;
@@ -466,7 +494,7 @@ async function resumeFromReceipt(file) {
   try {
     const receipt = parseReceipt(await file.text());
     const state = await apiFetch(`/api/auctions/${encodeURIComponent(receipt.auction_id)}`);
-    const bidder = state.bidders.find(b => b.bidder_id === receipt.bidder_id);
+    const bidder = state.bidders.find((b) => b.bidder_id === receipt.bidder_id);
     if (!bidder) throw new Error("The auction has no such bidder.");
     if (bidder.commitment_hex !== receipt.commitment_hex) {
       throw new Error(`The auction recorded a different commitment for ${bidder.name}.`);
@@ -474,7 +502,7 @@ async function resumeFromReceipt(file) {
 
     enterAsBidder(state, bidder.bidder_id, bidder.name, receipt.join_token);
     localState.bidderSecrets[bidder.bidder_id] = {
-      bid:            receipt.bid,
+      bid: receipt.bid,
       randomness_hex: receipt.randomness_hex,
       commitment_hex: receipt.commitment_hex,
     };
@@ -491,9 +519,12 @@ async function resumeFromReceipt(file) {
 // is still needed for a reveal.
 window.addEventListener("beforeunload", (event) => {
   const state = localState.serverState;
-  const needed = state && state.state !== "finished" && state.bidders.some(
-    b => localState.bidderSecrets[b.bidder_id] && !hasRevealedBid(b) && !b.missed_deadline,
-  );
+  const needed =
+    state &&
+    state.state !== "finished" &&
+    state.bidders.some(
+      (b) => localState.bidderSecrets[b.bidder_id] && !hasRevealedBid(b) && !b.missed_deadline,
+    );
   if (needed) {
     event.preventDefault();
     event.returnValue = true; // what older browsers look for instead
@@ -533,12 +564,12 @@ async function submitProof(bidderId) {
   const secret = localState.bidderSecrets[bidderId];
   const { auction_id, min_bid, max_bid } = localState.auction;
   const proof = await window.auctionCrypto.proveBid({
-    bid:           BigInt(secret.bid),
-    blindingHex:   secret.randomness_hex,
+    bid: BigInt(secret.bid),
+    blindingHex: secret.randomness_hex,
     commitmentHex: secret.commitment_hex,
-    minBid:        BigInt(min_bid),
-    maxBid:        BigInt(max_bid),
-    auctionId:     auction_id,
+    minBid: BigInt(min_bid),
+    maxBid: BigInt(max_bid),
+    auctionId: auction_id,
     bidderId,
   });
   const data = await postAsBidder(bidderId, "prove", { proof });
@@ -549,7 +580,7 @@ async function submitProof(bidderId) {
 function submitReveal(bidderId) {
   const secret = localState.bidderSecrets[bidderId];
   return postAsBidder(bidderId, "reveal", {
-    bid:            secret.bid,
+    bid: secret.bid,
     randomness_hex: secret.randomness_hex,
   });
 }
@@ -580,7 +611,10 @@ async function commitBid(bidderId) {
   }
 
   const btn = document.getElementById(`btn-commit-${bidderId}`);
-  if (btn) { btn.disabled = true; btn.textContent = "Committing…"; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Committing…";
+  }
 
   try {
     const { commitmentHex, blindingHex } = await submitCommitment(bidderId, bid);
@@ -590,7 +624,7 @@ async function commitBid(bidderId) {
       commitment: truncHex(commitmentHex),
     });
     addPrivateLogEntry(bidderId, `${bidderName} — your secrets`, {
-      bid:        fmtBid(bid),
+      bid: fmtBid(bid),
       "blinding r": truncHex(blindingHex) + " (keep private)",
       "to reveal after a reload": "save the receipt (💾 on the card)",
     });
@@ -598,7 +632,10 @@ async function commitBid(bidderId) {
     await refreshState();
   } catch (err) {
     showBidderError(bidderId, `Commit failed: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = "Commit"; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Commit";
+    }
   }
 }
 
@@ -613,10 +650,16 @@ const NO_SECRET =
 async function proveBid(bidderId) {
   showBidderError(bidderId, "");
   const secret = localState.bidderSecrets[bidderId];
-  if (!secret) { showBidderError(bidderId, NO_SECRET); return; }
+  if (!secret) {
+    showBidderError(bidderId, NO_SECRET);
+    return;
+  }
 
   const btn = document.getElementById(`btn-prove-${bidderId}`);
-  if (btn) { btn.disabled = true; btn.textContent = "Proving…"; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Proving…";
+  }
 
   try {
     const { proof, data } = await submitProof(bidderId);
@@ -630,7 +673,10 @@ async function proveBid(bidderId) {
     await refreshState();
   } catch (err) {
     showBidderError(bidderId, `Proof failed: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = "ZK Prove"; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "ZK Prove";
+    }
   }
 }
 
@@ -641,10 +687,16 @@ async function proveBid(bidderId) {
 async function revealBid(bidderId) {
   showBidderError(bidderId, "");
   const secret = localState.bidderSecrets[bidderId];
-  if (!secret) { showBidderError(bidderId, NO_SECRET); return; }
+  if (!secret) {
+    showBidderError(bidderId, NO_SECRET);
+    return;
+  }
 
   const btn = document.getElementById(`btn-reveal-${bidderId}`);
-  if (btn) { btn.disabled = true; btn.textContent = "Revealing…"; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Revealing…";
+  }
 
   try {
     const data = await submitReveal(bidderId);
@@ -653,13 +705,18 @@ async function revealBid(bidderId) {
     if (data.verified) {
       addPublicLogEntry(`${bidderName} revealed bid ✓`, { bid: fmtBid(secret.bid) });
     } else {
-      addPublicLogEntry(`${bidderName} reveal FAILED — cheater detected`, { bid: fmtBid(secret.bid) });
+      addPublicLogEntry(`${bidderName} reveal FAILED — cheater detected`, {
+        bid: fmtBid(secret.bid),
+      });
     }
 
     await refreshState(); // shows the winner if this reveal was the last
   } catch (err) {
     showBidderError(bidderId, `Reveal failed: ${err.message}`);
-    if (btn) { btn.disabled = false; btn.textContent = "Reveal"; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Reveal";
+    }
   }
 }
 
@@ -696,7 +753,10 @@ async function refreshState() {
       return;
     }
     // Keep trying: the page relies on refreshes to follow the deadlines.
-    showToast(`Could not refresh the auction: ${err.message} Retrying…`, { key: "refresh", sticky: true });
+    showToast(`Could not refresh the auction: ${err.message} Retrying…`, {
+      key: "refresh",
+      sticky: true,
+    });
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshState, REFRESH_RETRY_SECONDS * 1000);
   }
@@ -757,7 +817,7 @@ function renderAll(state) {
 function renderPhaseIndicator(state) {
   const pills = document.querySelectorAll(".phase-pill");
   const activePill = PHASE_STEP[state.state] ?? "finished";
-  pills.forEach(pill => {
+  pills.forEach((pill) => {
     const active = pill.dataset.phase === activePill;
     pill.classList.toggle("active", active);
     // The colour shows the step in progress; aria-current tells screen readers.
@@ -805,27 +865,27 @@ function phaseBadge(label) {
 /** A bidder's card: its elements, created once, which updateBidderCard fills in. */
 function createBidderCard(bidderId) {
   const view = {
-    card:         el("div", "bidder-card"),
-    name:         el("span", "bidder-name"),
+    card: el("div", "bidder-card"),
+    name: el("span", "bidder-name"),
     badges: {
-      commit:     phaseBadge("COMMIT"),
-      prove:      phaseBadge("PROVE"),
-      reveal:     phaseBadge("REVEAL"),
+      commit: phaseBadge("COMMIT"),
+      prove: phaseBadge("PROVE"),
+      reveal: phaseBadge("REVEAL"),
     },
-    hash:         el("div", "bidder-commitment-hash"),
-    status:       el("div", ""),
-    winner:       el("div", "bidder-winner-badge", "🏆 Winner!"),
-    actions:      el("div", "bidder-actions"),
-    error:        el("div", "bidder-error"),  // see showBidderError
-    errorPhase:   undefined,
+    hash: el("div", "bidder-commitment-hash"),
+    status: el("div", ""),
+    winner: el("div", "bidder-winner-badge", "🏆 Winner!"),
+    actions: el("div", "bidder-actions"),
+    error: el("div", "bidder-error"), // see showBidderError
+    errorPhase: undefined,
     // The controls last as long as the card; only which ones show changes.
-    bidForm:      el("div", "bidder-bid-input"),
-    bidInput:     el("input", ""),
+    bidForm: el("div", "bidder-bid-input"),
+    bidInput: el("input", ""),
     commitButton: el("button", "btn btn-commit", "Commit"),
-    proveButton:  el("button", "btn btn-prove", "ZK Prove"),
+    proveButton: el("button", "btn btn-prove", "ZK Prove"),
     revealButton: el("button", "btn btn-reveal", "Reveal"),
     receiptButton: el("button", "btn btn-receipt", "💾 Save receipt"),
-    note:         el("span", "bidder-note"),
+    note: el("span", "bidder-note"),
   };
   view.bidInput.type = "number";
   view.bidInput.id = `bid-input-${bidderId}`;
@@ -845,7 +905,7 @@ function createBidderCard(bidderId) {
   });
   view.bidForm.append(view.bidInput, view.commitButton);
   view.error.id = `bidder-error-${bidderId}`;
-  view.error.setAttribute("role", "alert");  // announced by screen readers
+  view.error.setAttribute("role", "alert"); // announced by screen readers
   view.error.hidden = true;
   view.bidInput.setAttribute("aria-describedby", view.error.id);
 
@@ -885,8 +945,11 @@ function bidderActions(view, b, state) {
   // A page resumed from a receipt acts for that bidder only.
   if (!localState.joinTokens[b.bidder_id]) return [];
   const actions = stepActions(view, b, state);
-  const needsReceipt = localState.bidderSecrets[b.bidder_id] && !hasRevealedBid(b)
-    && !b.missed_deadline && state.state !== "finished";
+  const needsReceipt =
+    localState.bidderSecrets[b.bidder_id] &&
+    !hasRevealedBid(b) &&
+    !b.missed_deadline &&
+    state.state !== "finished";
   return needsReceipt ? [...actions, view.receiptButton] : actions;
 }
 
@@ -913,13 +976,14 @@ function stepActions(view, b, state) {
     view.bidInput.max = state.max_bid;
     view.bidInput.placeholder = `${state.min_bid}–${state.max_bid}`;
     view.bidInput.setAttribute(
-      "aria-label", `${b.name}'s bid, from ${fmtBid(state.min_bid)} to ${fmtBid(state.max_bid)}`,
+      "aria-label",
+      `${b.name}'s bid, from ${fmtBid(state.min_bid)} to ${fmtBid(state.max_bid)}`,
     );
     return [view.bidForm];
   }
   if (state.state === "committed") {
     if (hasProved) return [note("prove", `✓ Proved (${b.proof_valid ? "valid" : "invalid"})`)];
-    if (!b.commitment_hex) return [];  // missed the commit deadline
+    if (!b.commitment_hex) return []; // missed the commit deadline
     return stepButton(view.proveButton, "Commit this bidder in this browser session first");
   }
   if (state.state === "proved" && hasProved && !hasRevealedBid(b)) {
@@ -930,16 +994,16 @@ function stepActions(view, b, state) {
 
 function updateBidderCard(view, b, state) {
   const hasCommitted = !!b.commitment_hex;
-  const hasProved    = b.proof_valid !== null && b.proof_valid !== undefined;
-  const hasRevealed  = hasRevealedBid(b);
-  const isWinner     = !!state.winner && state.winner.bidder_id === b.bidder_id;
+  const hasProved = b.proof_valid !== null && b.proof_valid !== undefined;
+  const hasRevealed = hasRevealedBid(b);
+  const isWinner = !!state.winner && state.winner.bidder_id === b.bidder_id;
 
   let cardClass = "bidder-card";
-  if (isWinner)               cardClass += " winner";
+  if (isWinner) cardClass += " winner";
   else if (b.missed_deadline) cardClass += " missed";
-  else if (hasRevealed)       cardClass += " revealed";
-  else if (hasProved)         cardClass += " proved";
-  else if (hasCommitted)      cardClass += " committed";
+  else if (hasRevealed) cardClass += " revealed";
+  else if (hasProved) cardClass += " proved";
+  else if (hasCommitted) cardClass += " committed";
   view.card.className = cardClass;
   view.name.textContent = b.name;
 
@@ -970,7 +1034,7 @@ function updateBidderCard(view, b, state) {
 }
 
 function renderBidderCards(state) {
-  const cards = state.bidders.map(b => {
+  const cards = state.bidders.map((b) => {
     if (!bidderCards.has(b.bidder_id)) bidderCards.set(b.bidder_id, createBidderCard(b.bidder_id));
     const view = bidderCards.get(b.bidder_id);
     updateBidderCard(view, b, state);
@@ -985,29 +1049,41 @@ function renderBidderCards(state) {
 
 function renderActionsPanel(state) {
   const container = document.getElementById("actions-content");
-  const phase     = state.state;
-  const bidders   = state.bidders;
+  const phase = state.state;
+  const bidders = state.bidders;
 
   // Bidders who missed a deadline are out, so progress counts the others.
-  const taking    = bidders.filter(b => !b.missed_deadline);
-  const committed = taking.filter(b => b.commitment_hex).length;
-  const proved    = taking.filter(b => b.proof_valid !== null && b.proof_valid !== undefined).length;
-  const revealed  = taking.filter(hasRevealedBid).length;
-  const total     = taking.length;
+  const taking = bidders.filter((b) => !b.missed_deadline);
+  const committed = taking.filter((b) => b.commitment_hex).length;
+  const proved = taking.filter((b) => b.proof_valid !== null && b.proof_valid !== undefined).length;
+  const revealed = taking.filter(hasRevealedBid).length;
+  const total = taking.length;
 
   let html = "";
 
   // Phase description. `tone` names the phase's colour (a CSS class, as the
   // page has no inline styles).
   const phaseDescriptions = {
-    open:      { title: "Phase 1 — Commit", tone: "commit",
-      desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1, computed in this browser. The auctioneer receives only C, which hides the bid; the bidder cannot change it afterwards." },
-    committed: { title: "Phase 2 — ZK Prove", tone: "prove",
-      desc: "Each bidder proves in zero knowledge that the committed bid lies in <strong>[min, max]</strong>: a range proof made of one OR-proof per bit, checked without revealing the bid." },
-    proved:    { title: "Phase 3 — Reveal", tone: "reveal",
-      desc: "Each bidder reveals <code>(bid, r)</code>. Anyone can check that <code>bid·G + r·H</code> equals the commitment. Highest verified bid wins; ties go to the earliest commitment." },
-    finished:  { title: "Auction Complete", tone: "finish",
-      desc: "The reveal phase is over. The winner has been determined from the verified bids." },
+    open: {
+      title: "Phase 1 — Commit",
+      tone: "commit",
+      desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1, computed in this browser. The auctioneer receives only C, which hides the bid; the bidder cannot change it afterwards.",
+    },
+    committed: {
+      title: "Phase 2 — ZK Prove",
+      tone: "prove",
+      desc: "Each bidder proves in zero knowledge that the committed bid lies in <strong>[min, max]</strong>: a range proof made of one OR-proof per bit, checked without revealing the bid.",
+    },
+    proved: {
+      title: "Phase 3 — Reveal",
+      tone: "reveal",
+      desc: "Each bidder reveals <code>(bid, r)</code>. Anyone can check that <code>bid·G + r·H</code> equals the commitment. Highest verified bid wins; ties go to the earliest commitment.",
+    },
+    finished: {
+      title: "Auction Complete",
+      tone: "finish",
+      desc: "The reveal phase is over. The winner has been determined from the verified bids.",
+    },
   };
 
   const desc = phaseDescriptions[phase] || phaseDescriptions.open;
@@ -1021,9 +1097,9 @@ function renderActionsPanel(state) {
   // Progress
   if (phase !== "finished") {
     const [label, done] = {
-      open:      [`Committed: ${committed} / ${total}`, committed],
+      open: [`Committed: ${committed} / ${total}`, committed],
       committed: [`ZK Proved: ${proved} / ${total}`, proved],
-      proved:    [`Revealed: ${revealed} / ${total}`, revealed],
+      proved: [`Revealed: ${revealed} / ${total}`, revealed],
     }[phase];
 
     html += `
@@ -1132,7 +1208,7 @@ let focusBeforeWinner = null;
 
 function showWinnerModal(winner) {
   document.getElementById("winner-name").textContent = winner.name;
-  document.getElementById("winner-bid").textContent  = fmtBid(winner.bid);
+  document.getElementById("winner-bid").textContent = fmtBid(winner.bid);
   const dialog = document.getElementById("winner-modal");
   if (dialog.open) return;
   focusBeforeWinner = document.activeElement;
@@ -1204,7 +1280,7 @@ async function resetAuction() {
 
 function getBidderName(bidderId) {
   if (!localState.serverState) return bidderId;
-  const b = localState.serverState.bidders.find(x => x.bidder_id === bidderId);
+  const b = localState.serverState.bidders.find((x) => x.bidder_id === bidderId);
   return b ? b.name : bidderId;
 }
 
@@ -1226,7 +1302,11 @@ function sleep(ms) {
     }, ms);
     // If aborted before timer fires, reject immediately on next tick
     const check = setInterval(() => {
-      if (demo.aborted) { clearTimeout(id); clearInterval(check); reject(new Error("Demo stopped")); }
+      if (demo.aborted) {
+        clearTimeout(id);
+        clearInterval(check);
+        reject(new Error("Demo stopped"));
+      }
     }, 50);
     // Clean up interval once timer resolves
     setTimeout(() => clearInterval(check), ms + 100);
@@ -1257,9 +1337,9 @@ async function startDemo() {
 
   // Create the auction on the server
   const createBtn = document.getElementById("btn-create");
-  const demoBtn   = document.getElementById("btn-demo");
+  const demoBtn = document.getElementById("btn-demo");
   createBtn.disabled = true;
-  demoBtn.disabled   = true;
+  demoBtn.disabled = true;
   demoBtn.textContent = "Starting…";
 
   let auctionData;
@@ -1272,7 +1352,7 @@ async function startDemo() {
     // Usable again whether the demo started or not: they stayed disabled
     // after a demo, so the setup form was dead after a reset.
     createBtn.disabled = false;
-    demoBtn.disabled   = false;
+    demoBtn.disabled = false;
     demoBtn.textContent = "▶ Watch Demo";
   }
 
@@ -1282,15 +1362,15 @@ async function startDemo() {
 
   await refreshState();
   addPublicLogEntry("Auction created (Demo mode)", {
-    item:    auctionData.item_name,
-    range:   `${fmtBid(auctionData.min_bid)} – ${fmtBid(auctionData.max_bid)}`,
-    bidders: auctionData.bidders.map(b => b.name).join(", "),
+    item: auctionData.item_name,
+    range: `${fmtBid(auctionData.min_bid)} – ${fmtBid(auctionData.max_bid)}`,
+    bidders: auctionData.bidders.map((b) => b.name).join(", "),
   });
 
   // Assign each bidder a random bid (chosen now, revealed only in phase 3)
-  const bidderIds = auctionData.bidders.map(b => b.bidder_id);
+  const bidderIds = auctionData.bidders.map((b) => b.bidder_id);
   const assignedBids = {};
-  bidderIds.forEach(id => {
+  bidderIds.forEach((id) => {
     assignedBids[id] = randInt(auctionData.min_bid, auctionData.max_bid);
   });
 
@@ -1303,7 +1383,7 @@ async function startDemo() {
     const commitOrder = shuffle([...bidderIds]);
     for (const bidderId of commitOrder) {
       if (demo.aborted) break;
-      const bid  = assignedBids[bidderId];
+      const bid = assignedBids[bidderId];
       const name = getBidderNameFromData(auctionData, bidderId);
       setDemoStatus(`Phase 1 — ${name} is committing…`);
       await sleep(randInt(800, 1600));
@@ -1313,7 +1393,7 @@ async function startDemo() {
 
       addPublicLogEntry(`${name} committed`, { commitment: truncHex(commitmentHex) });
       addPrivateLogEntry(bidderId, `${name} — secret (demo)`, {
-        bid:        fmtBid(bid),
+        bid: fmtBid(bid),
         "blinding r": truncHex(blindingHex),
       });
       await refreshState();
@@ -1323,7 +1403,7 @@ async function startDemo() {
     const proveOrder = shuffle([...bidderIds]);
     for (const bidderId of proveOrder) {
       if (demo.aborted) break;
-      const name   = getBidderNameFromData(auctionData, bidderId);
+      const name = getBidderNameFromData(auctionData, bidderId);
       setDemoStatus(`Phase 2 — ${name} is generating ZK proof…`);
       await sleep(randInt(900, 1800));
       if (demo.aborted) break;
@@ -1340,7 +1420,7 @@ async function startDemo() {
     const revealOrder = shuffle([...bidderIds]);
     for (const bidderId of revealOrder) {
       if (demo.aborted) break;
-      const name   = getBidderNameFromData(auctionData, bidderId);
+      const name = getBidderNameFromData(auctionData, bidderId);
       const secret = localState.bidderSecrets[bidderId];
       setDemoStatus(`Phase 3 — ${name} is revealing bid…`);
       await sleep(randInt(900, 1700));
@@ -1361,7 +1441,6 @@ async function startDemo() {
         showWinnerModal(data.winner);
       }
     }
-
   } catch (err) {
     if (err.message !== "Demo stopped") {
       addPublicLogEntry("Demo error", { error: err.message });
@@ -1382,7 +1461,7 @@ function stopDemo() {
 
 /** Look up a bidder name directly from the create-response data (before serverState is set). */
 function getBidderNameFromData(auctionData, bidderId) {
-  const b = auctionData.bidders.find(x => x.bidder_id === bidderId);
+  const b = auctionData.bidders.find((x) => x.bidder_id === bidderId);
   return b ? b.name : bidderId;
 }
 

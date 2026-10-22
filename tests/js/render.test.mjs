@@ -34,7 +34,10 @@ function loadApp(overrides = {}) {
   vm.runInContext(APP_JS, app);
   // As on the organizer's page: it holds every bidder's join token, so it
   // offers each bidder their controls.
-  app.rememberAuction({ auction_id: "ab".repeat(16), bidders: joinTokens(["bidder_0", "bidder_1"]) });
+  app.rememberAuction({
+    auction_id: "ab".repeat(16),
+    bidders: joinTokens(["bidder_0", "bidder_1"]),
+  });
   return {
     app,
     document,
@@ -110,7 +113,10 @@ test("bidder cards put names in as text, never as markup", () => {
   const nodes = [container, ...container.descendants()];
   const name = nodes.find((node) => node.className === "bidder-name");
   assert.equal(name.textContent, PAYLOAD); // shown exactly as typed
-  assert.deepEqual(nodes.filter((node) => node.innerHTMLWrites > 0), []);
+  assert.deepEqual(
+    nodes.filter((node) => node.innerHTMLWrites > 0),
+    [],
+  );
 });
 
 test("a bid being typed, and the focus, survive a refresh", () => {
@@ -214,7 +220,11 @@ test("the phase indicator lights the phase in progress, for screen readers too",
     const lit = pills.filter((p) => p.classList.contains("active")).map((p) => p.dataset.phase);
     assert.deepEqual(lit, [phase], `state "${state}"`);
     const current = pills.filter((p) => p.getAttribute("aria-current") === "step");
-    assert.deepEqual(current.map((p) => p.dataset.phase), [phase], `aria-current in "${state}"`);
+    assert.deepEqual(
+      current.map((p) => p.dataset.phase),
+      [phase],
+      `aria-current in "${state}"`,
+    );
   }
 });
 
@@ -222,7 +232,9 @@ test("a card says in words what its colours show", () => {
   const { app, document } = loadApp();
   const state = auctionState({
     state: "proved",
-    bidders: [bidder("bidder_0", "Alice", { commitment_hex: "02" + "aa".repeat(32), proof_valid: false })],
+    bidders: [
+      bidder("bidder_0", "Alice", { commitment_hex: "02" + "aa".repeat(32), proof_valid: false }),
+    ],
   });
   app.renderBidderCards(state);
   const card = document.getElementById("bidder-cards").firstElementChild;
@@ -247,7 +259,8 @@ test("nothing the script builds would be blocked by the page's CSP", () => {
   });
   const committed = { commitment_hex: "02" + "aa".repeat(32), proof_valid: true };
   for (const state of ["open", "committed", "proved", "finished"]) {
-    const winner = state === "finished" ? { bidder_id: "bidder_0", name: "Alice", bid: 1000 } : null;
+    const winner =
+      state === "finished" ? { bidder_id: "bidder_0", name: "Alice", bid: 1000 } : null;
     const bidders = [bidder("bidder_0", "Alice", committed), bidder("bidder_1", "Bob")];
     app.renderAll(auctionState({ state, winner, bidders }));
   }
@@ -257,16 +270,30 @@ test("nothing the script builds would be blocked by the page's CSP", () => {
   // Inside a tag: escaped text such as the item name "&lt;img onerror=…" is harmless.
   const inline = /<[^>]*\s(?:on[a-z]+|style)\s*=/i;
   assert.ok(document.markupWritten.length > 0);
-  assert.deepEqual(document.markupWritten.filter((markup) => inline.test(markup)), []);
-  assert.deepEqual(document.attributesSet.filter((name) => /^(?:style|on)/i.test(name)), []);
+  assert.deepEqual(
+    document.markupWritten.filter((markup) => inline.test(markup)),
+    [],
+  );
+  assert.deepEqual(
+    document.attributesSet.filter((name) => /^(?:style|on)/i.test(name)),
+    [],
+  );
 });
 
 test("every control of the page is connected by the script", async () => {
   // With no inline handlers, a control the script forgets would do nothing.
   const { document } = loadApp();
   const controls = {
-    click: ["btn-add-bidder", "bidder-inputs", "btn-create", "btn-demo", "btn-stop-demo",
-            "btn-clear-log", "btn-reset", "btn-close-winner"],
+    click: [
+      "btn-add-bidder",
+      "bidder-inputs",
+      "btn-create",
+      "btn-demo",
+      "btn-stop-demo",
+      "btn-clear-log",
+      "btn-reset",
+      "btn-close-winner",
+    ],
     change: ["receipt-file"],
   };
   for (const [type, ids] of Object.entries(controls)) {

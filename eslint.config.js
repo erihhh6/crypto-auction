@@ -23,7 +23,7 @@ export default defineConfig([
       "no-eval": "error",
       "no-implied-eval": "error",
       "no-new-func": "error",
-      "eqeqeq": "error",
+      eqeqeq: "error",
       "no-shadow": "error",
       "prefer-const": "error",
       "no-var": "error",

@@ -6,47 +6,55 @@
 /* ---- Custom properties ---- */
 :root {
   /* Phase colours, for borders, fills and buttons with white text. */
-  --color-commit:  #2563eb;
-  --color-prove:   #7c3aed;
-  --color-reveal:  #dc2626;
-  --color-finish:  #d97706;
+  --color-commit: #2563eb;
+  --color-prove: #7c3aed;
+  --color-reveal: #dc2626;
+  --color-finish: #d97706;
 
-  --bg-base:       #0f172a;
-  --bg-surface:    #1e293b;
-  --bg-raised:     #273449;
-  --bg-input:      #0f172a;
+  --bg-base: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-raised: #273449;
+  --bg-input: #0f172a;
 
   /* Text colours: each has at least 4.5:1 contrast (WCAG AA) on every
      background above, so they are what text uses; the phase colours as text
      fall to 2.2:1. The tinted ones are the phase colours lightened just
      enough. */
-  --text-primary:  #f1f5f9;
-  --text-muted:    #94a3b8;
-  --text-dim:      #919cad;
-  --text-commit:   #719af2;
-  --text-prove:    #af87f4;
-  --text-reveal:   #ea7b7b;
-  --text-finish:   #de8724;
-  --text-danger:   #f37575;
+  --text-primary: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #919cad;
+  --text-commit: #719af2;
+  --text-prove: #af87f4;
+  --text-reveal: #ea7b7b;
+  --text-finish: #de8724;
+  --text-danger: #f37575;
 
-  --border:        #334155;
+  --border: #334155;
   --border-subtle: #1e293b;
 
-  --radius-sm:     6px;
-  --radius-md:     10px;
-  --radius-lg:     16px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
 
-  --green:  #22c55e;
-  --amber:  #f59e0b;
-  --red:    #ef4444;
-  --gold:   #fbbf24;
+  --green: #22c55e;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --gold: #fbbf24;
 }
 
 /* ---- Reset ---- */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 /* The hidden attribute must win over the display of classes such as .bidder-winner-badge. */
-[hidden] { display: none !important; }
+[hidden] {
+  display: none !important;
+}
 
 /* ---- Accessibility ---- */
 /* Whatever has the keyboard focus shows it, clearly, on every background. */
@@ -70,16 +78,23 @@
 
 /* No pulsing or sliding for whoever asks their system for less motion. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
   }
 }
 
-html { font-size: 14px; }
+html {
+  font-size: 14px;
+}
 
 body {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: var(--bg-base);
   color: var(--text-primary);
   min-height: 100vh;
@@ -114,7 +129,9 @@ header {
   gap: 10px;
 }
 
-.brand-icon { font-size: 22px; }
+.brand-icon {
+  font-size: 22px;
+}
 
 .header-brand h1 {
   font-size: 18px;
@@ -158,10 +175,22 @@ header {
   border-color: currentColor;
 }
 
-.phase-pill[data-phase="commit"].active  { color: var(--text-commit);  background: rgba(37,99,235,.15); }
-.phase-pill[data-phase="prove"].active   { color: var(--text-prove);   background: rgba(124,58,237,.15); }
-.phase-pill[data-phase="reveal"].active  { color: var(--text-reveal);  background: rgba(220,38,38,.15); }
-.phase-pill[data-phase="finished"].active{ color: var(--text-finish);  background: rgba(217,119,6,.15); }
+.phase-pill[data-phase="commit"].active {
+  color: var(--text-commit);
+  background: rgba(37, 99, 235, 0.15);
+}
+.phase-pill[data-phase="prove"].active {
+  color: var(--text-prove);
+  background: rgba(124, 58, 237, 0.15);
+}
+.phase-pill[data-phase="reveal"].active {
+  color: var(--text-reveal);
+  background: rgba(220, 38, 38, 0.15);
+}
+.phase-pill[data-phase="finished"].active {
+  color: var(--text-finish);
+  background: rgba(217, 119, 6, 0.15);
+}
 
 .pill-dot {
   width: 7px;
@@ -172,15 +201,27 @@ header {
   transition: background 0.3s ease;
 }
 
-.phase-pill.active .pill-dot { background: currentColor; }
+.phase-pill.active .pill-dot {
+  background: currentColor;
+}
 
 @keyframes pulse-pill {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
-.phase-pill.active .pill-dot { animation: pulse-pill 2s ease-in-out infinite; }
+.phase-pill.active .pill-dot {
+  animation: pulse-pill 2s ease-in-out infinite;
+}
 
-.phase-arrow { color: var(--text-dim); font-size: 12px; }
+.phase-arrow {
+  color: var(--text-dim);
+  font-size: 12px;
+}
 
 /* =====================================================================
    SETUP PANEL
@@ -241,9 +282,13 @@ input[type="number"] {
   transition: border-color 0.2s;
 }
 input[type="text"]:focus,
-input[type="number"]:focus { border-color: var(--color-commit); }
+input[type="number"]:focus {
+  border-color: var(--color-commit);
+}
 
-.bidders-setup { margin-bottom: 28px; }
+.bidders-setup {
+  margin-bottom: 28px;
+}
 .bidders-setup > label {
   display: block;
   margin-bottom: 10px;
@@ -256,7 +301,9 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   gap: 8px;
   margin-bottom: 8px;
 }
-.bidder-input-row input { flex: 1; }
+.bidder-input-row input {
+  flex: 1;
+}
 
 .btn-remove-bidder {
   background: transparent;
@@ -268,7 +315,11 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-size: 13px;
   transition: all 0.2s;
 }
-.btn-remove-bidder:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--text-danger); }
+.btn-remove-bidder:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--red);
+  color: var(--text-danger);
+}
 
 #btn-add-bidder {
   background: transparent;
@@ -282,7 +333,10 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   margin-top: 4px;
   transition: all 0.2s;
 }
-#btn-add-bidder:hover { border-color: var(--color-commit); color: var(--text-commit); }
+#btn-add-bidder:hover {
+  border-color: var(--color-commit);
+  color: var(--text-commit);
+}
 
 .setup-buttons {
   display: flex;
@@ -299,14 +353,20 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-weight: 600;
   padding: 12px 20px;
   flex: 0 0 auto;
-  transition: background 0.2s, transform 0.1s;
+  transition:
+    background 0.2s,
+    transform 0.1s;
 }
-#btn-demo:hover  { background: rgba(124,58,237,.15); }
-#btn-demo:active { transform: scale(0.98); }
+#btn-demo:hover {
+  background: rgba(124, 58, 237, 0.15);
+}
+#btn-demo:active {
+  transform: scale(0.98);
+}
 
 /* Demo banner */
 #demo-banner {
-  background: rgba(124,58,237,.12);
+  background: rgba(124, 58, 237, 0.12);
   border-bottom: 1px solid var(--color-prove);
   display: flex;
   align-items: center;
@@ -317,7 +377,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-weight: 600;
 }
 #demo-banner button {
-  background: rgba(124,58,237,.2);
+  background: rgba(124, 58, 237, 0.2);
   border: 1px solid var(--color-prove);
   border-radius: var(--radius-sm);
   color: var(--text-prove);
@@ -327,13 +387,22 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   padding: 4px 12px;
   transition: background 0.2s;
 }
-#demo-banner button:hover { background: rgba(124,58,237,.35); }
+#demo-banner button:hover {
+  background: rgba(124, 58, 237, 0.35);
+}
 
 @keyframes demo-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
-#demo-status-text { animation: demo-pulse 1.5s ease-in-out infinite; }
+#demo-status-text {
+  animation: demo-pulse 1.5s ease-in-out infinite;
+}
 
 #btn-create {
   background: var(--color-commit);
@@ -345,14 +414,20 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-weight: 600;
   padding: 12px 24px;
   flex: 1;
-  transition: background 0.2s, transform 0.1s;
+  transition:
+    background 0.2s,
+    transform 0.1s;
 }
-#btn-create:hover  { background: #1d4ed8; }
-#btn-create:active { transform: scale(0.98); }
+#btn-create:hover {
+  background: #1d4ed8;
+}
+#btn-create:active {
+  transform: scale(0.98);
+}
 
 .error-msg {
-  background: rgba(239,68,68,.1);
-  border: 1px solid rgba(239,68,68,.3);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
   border-radius: var(--radius-sm);
   color: var(--text-danger);
   font-size: 13px;
@@ -367,10 +442,19 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-size: 13px;
   color: var(--text-muted);
 }
-.resume label { display: block; margin-bottom: 8px; }
+.resume label {
+  display: block;
+  margin-bottom: 8px;
+}
 
-.btn-receipt { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); }
-.btn-receipt:hover { color: var(--text-primary); }
+.btn-receipt {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.btn-receipt:hover {
+  color: var(--text-primary);
+}
 
 /* =====================================================================
    MAIN AUCTION LAYOUT — 3-column grid
@@ -390,7 +474,9 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   padding: 20px;
   border-right: 1px solid var(--border);
 }
-#actions-panel { border-right: none; }
+#actions-panel {
+  border-right: none;
+}
 
 .panel-header {
   display: flex;
@@ -398,7 +484,13 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   justify-content: space-between;
   margin-bottom: 16px;
 }
-.panel-header h2 { font-size: 14px; font-weight: 700; letter-spacing: 0.3px; color: var(--text-muted); text-transform: uppercase; }
+.panel-header h2 {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
 
 .item-label {
   font-size: 12px;
@@ -418,13 +510,24 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   border-radius: var(--radius-md);
   padding: 14px 16px;
   margin-bottom: 12px;
-  transition: border-left-color 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    border-left-color 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
-.bidder-card.committed  { border-left-color: var(--color-commit); }
-.bidder-card.proved     { border-left-color: var(--color-prove);  }
-.bidder-card.revealed   { border-left-color: var(--color-reveal); }
-.bidder-card.winner     { box-shadow: 0 0 0 2px var(--gold); border-left-color: var(--gold); }
+.bidder-card.committed {
+  border-left-color: var(--color-commit);
+}
+.bidder-card.proved {
+  border-left-color: var(--color-prove);
+}
+.bidder-card.revealed {
+  border-left-color: var(--color-reveal);
+}
+.bidder-card.winner {
+  box-shadow: 0 0 0 2px var(--gold);
+  border-left-color: var(--gold);
+}
 
 .bidder-card-name {
   font-weight: 700;
@@ -463,10 +566,26 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   transition: all 0.3s ease;
 }
 
-.phase-badge.done.commit  { background: rgba(37,99,235,.2);   border-color: var(--color-commit); color: var(--text-commit); }
-.phase-badge.done.prove   { background: rgba(124,58,237,.2);  border-color: var(--color-prove);  color: var(--text-prove); }
-.phase-badge.done.reveal  { background: rgba(220,38,38,.2);   border-color: var(--color-reveal); color: var(--text-reveal); }
-.phase-badge.invalid      { background: rgba(239,68,68,.15);  border-color: var(--red); color: var(--text-danger); }
+.phase-badge.done.commit {
+  background: rgba(37, 99, 235, 0.2);
+  border-color: var(--color-commit);
+  color: var(--text-commit);
+}
+.phase-badge.done.prove {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: var(--color-prove);
+  color: var(--text-prove);
+}
+.phase-badge.done.reveal {
+  background: rgba(220, 38, 38, 0.2);
+  border-color: var(--color-reveal);
+  color: var(--text-reveal);
+}
+.phase-badge.invalid {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--red);
+  color: var(--text-danger);
+}
 
 .bidder-commitment-hash {
   font-family: monospace;
@@ -489,7 +608,9 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   margin-bottom: 8px;
 }
 
-.bidder-card.missed { opacity: 0.6; }
+.bidder-card.missed {
+  opacity: 0.6;
+}
 
 .bidder-missed {
   font-size: 11px;
@@ -503,10 +624,20 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   margin-bottom: 6px;
 }
 
-.bidder-note        { font-size: 11px; }
-.bidder-note.commit { color: var(--text-commit); }
-.bidder-note.prove  { color: var(--text-prove); }
-.bidder-note.dim    { font-size: 10px; color: var(--text-dim); flex-basis: 100%; }
+.bidder-note {
+  font-size: 11px;
+}
+.bidder-note.commit {
+  color: var(--text-commit);
+}
+.bidder-note.prove {
+  color: var(--text-prove);
+}
+.bidder-note.dim {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-basis: 100%;
+}
 
 .bidder-winner-badge {
   font-size: 11px;
@@ -545,30 +676,73 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-size: 12px;
   font-weight: 600;
   padding: 7px 14px;
-  transition: background 0.2s, transform 0.1s, opacity 0.2s;
+  transition:
+    background 0.2s,
+    transform 0.1s,
+    opacity 0.2s;
 }
-.btn:active { transform: scale(0.97); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
-.btn-commit  { background: var(--color-commit); color: #fff; }
-.btn-commit:hover:not(:disabled)  { background: #1d4ed8; }
+.btn-commit {
+  background: var(--color-commit);
+  color: #fff;
+}
+.btn-commit:hover:not(:disabled) {
+  background: #1d4ed8;
+}
 
-.btn-prove   { background: var(--color-prove);  color: #fff; }
-.btn-prove:hover:not(:disabled)   { background: #6d28d9; }
+.btn-prove {
+  background: var(--color-prove);
+  color: #fff;
+}
+.btn-prove:hover:not(:disabled) {
+  background: #6d28d9;
+}
 
-.btn-reveal  { background: var(--color-reveal); color: #fff; }
-.btn-reveal:hover:not(:disabled)  { background: #b91c1c; }
+.btn-reveal {
+  background: var(--color-reveal);
+  color: #fff;
+}
+.btn-reveal:hover:not(:disabled) {
+  background: #b91c1c;
+}
 
-.btn-reset   { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); }
-.btn-reset:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--text-danger); }
+.btn-reset {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.btn-reset:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--red);
+  color: var(--text-danger);
+}
 
-.btn-clear-log { background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; padding: 3px 8px; }
-.btn-clear-log:hover { color: var(--text-muted); }
+.btn-clear-log {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.btn-clear-log:hover {
+  color: var(--text-muted);
+}
 
 /* =====================================================================
    PROTOCOL LOG
    ===================================================================== */
-.log-section { margin-bottom: 20px; }
+.log-section {
+  margin-bottom: 20px;
+}
 
 .log-section-title {
   font-size: 11px;
@@ -588,12 +762,22 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.public-dot  { background: var(--green); }
-.private-dot { background: var(--amber); }
+.public-dot {
+  background: var(--green);
+}
+.private-dot {
+  background: var(--amber);
+}
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .log-entry {
@@ -606,8 +790,12 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   animation: fadeInUp 0.25s ease;
 }
 
-.log-entry.public  { border-left-color: var(--green); }
-.log-entry.private { border-left-color: var(--amber); }
+.log-entry.public {
+  border-left-color: var(--green);
+}
+.log-entry.private {
+  border-left-color: var(--amber);
+}
 
 .log-entry-header {
   display: flex;
@@ -661,7 +849,9 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   line-height: 1.6;
 }
 
-.action-info strong { color: var(--text-primary); }
+.action-info strong {
+  color: var(--text-primary);
+}
 
 .join-link {
   display: flex;
@@ -669,17 +859,48 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   gap: 8px;
   margin-top: 10px;
 }
-.join-link-name { flex: 0 0 72px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-.join-link-field { flex: 1; min-width: 0; font-family: monospace; font-size: 11px; }
-.btn-copy { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); padding: 5px 10px; }
-.btn-copy:hover { color: var(--text-primary); }
+.join-link-name {
+  flex: 0 0 72px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.join-link-field {
+  flex: 1;
+  min-width: 0;
+  font-family: monospace;
+  font-size: 11px;
+}
+.btn-copy {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+}
+.btn-copy:hover {
+  color: var(--text-primary);
+}
 
 /* A phase's colour: --tone for its progress bar, --tone-text for its title. */
-.tone-commit { --tone: var(--color-commit); --tone-text: var(--text-commit); }
-.tone-prove  { --tone: var(--color-prove);  --tone-text: var(--text-prove); }
-.tone-reveal { --tone: var(--color-reveal); --tone-text: var(--text-reveal); }
-.tone-finish { --tone: var(--color-finish); --tone-text: var(--text-finish); }
-.phase-title { color: var(--tone-text); }
+.tone-commit {
+  --tone: var(--color-commit);
+  --tone-text: var(--text-commit);
+}
+.tone-prove {
+  --tone: var(--color-prove);
+  --tone-text: var(--text-prove);
+}
+.tone-reveal {
+  --tone: var(--color-reveal);
+  --tone-text: var(--text-reveal);
+}
+.tone-finish {
+  --tone: var(--color-finish);
+  --tone-text: var(--text-finish);
+}
+.phase-title {
+  color: var(--tone-text);
+}
 
 .progress {
   appearance: none;
@@ -692,14 +913,30 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   background: var(--bg-raised);
   overflow: hidden;
 }
-.progress::-webkit-progress-bar   { background: var(--bg-raised); }
-.progress::-webkit-progress-value { background: var(--tone); transition: width 0.4s ease; }
-.progress::-moz-progress-bar      { background: var(--tone); }
+.progress::-webkit-progress-bar {
+  background: var(--bg-raised);
+}
+.progress::-webkit-progress-value {
+  background: var(--tone);
+  transition: width 0.4s ease;
+}
+.progress::-moz-progress-bar {
+  background: var(--tone);
+}
 
-.winner-section { border-color: var(--gold); }
-.winner-section .action-section-title { color: var(--gold); }
-.action-info .winning-bid { color: var(--green); }
-.fine-print { font-size: 10px; color: var(--text-dim); }
+.winner-section {
+  border-color: var(--gold);
+}
+.winner-section .action-section-title {
+  color: var(--gold);
+}
+.action-info .winning-bid {
+  color: var(--green);
+}
+.fine-print {
+  font-size: 10px;
+  color: var(--text-dim);
+}
 
 /* =====================================================================
    TOASTS AND INLINE ERRORS
@@ -708,7 +945,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 1100;  /* above the page (the winner dialog is above all, in the top layer) */
+  z-index: 1100; /* above the page (the winner dialog is above all, in the top layer) */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -726,13 +963,17 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: 13px;
-  box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   animation: fadeInUp 0.25s ease;
 }
 
-.toast.info { border-color: var(--green); }
+.toast.info {
+  border-color: var(--green);
+}
 
-.toast-text { flex: 1; }
+.toast-text {
+  flex: 1;
+}
 
 .toast-close {
   background: transparent;
@@ -741,7 +982,9 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   cursor: pointer;
   font-size: 12px;
 }
-.toast-close:hover { color: var(--text-primary); }
+.toast-close:hover {
+  color: var(--text-primary);
+}
 
 .bidder-error {
   margin-top: 8px;
@@ -755,7 +998,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 /* A native <dialog>, opened with showModal(): the browser centres it, keeps
    the focus inside it and makes the rest of the page inert while it is open. */
 #winner-modal::backdrop {
-  background: rgba(0,0,0,.75);
+  background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
 }
 
@@ -770,10 +1013,13 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   max-width: 420px;
   width: 90%;
   animation: fadeInUp 0.35s ease;
-  box-shadow: 0 0 60px rgba(251,191,36,.15);
+  box-shadow: 0 0 60px rgba(251, 191, 36, 0.15);
 }
 
-.winner-trophy { font-size: 56px; margin-bottom: 16px; }
+.winner-trophy {
+  font-size: 56px;
+  margin-bottom: 16px;
+}
 
 #winner-modal h2 {
   font-size: 22px;
@@ -813,15 +1059,26 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   padding: 10px 28px;
   transition: background 0.2s;
 }
-#winner-modal button:hover { background: var(--border); }
+#winner-modal button:hover {
+  background: var(--border);
+}
 
 /* =====================================================================
    SCROLLBARS
    ===================================================================== */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
 
 /* =====================================================================
    RESPONSIVE — collapse to single column below 900px
@@ -832,12 +1089,22 @@ input[type="number"]:focus { border-color: var(--color-commit); }
     height: auto;
     overflow: visible;
   }
-  #bidders-panel, #log-panel, #actions-panel {
+  #bidders-panel,
+  #log-panel,
+  #actions-panel {
     border-right: none;
     border-bottom: 1px solid var(--border);
     max-height: none;
     overflow: visible;
   }
-  .header-inner { flex-direction: column; height: auto; padding: 10px 16px; gap: 8px; }
-  .phase-indicator { flex-wrap: wrap; justify-content: center; }
+  .header-inner {
+    flex-direction: column;
+    height: auto;
+    padding: 10px 16px;
+    gap: 8px;
+  }
+  .phase-indicator {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
 }

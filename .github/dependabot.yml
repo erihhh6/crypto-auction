@@ -19,7 +19,8 @@ updates:
       python-dev-tools:
         patterns: ["mypy", "pytest", "pytest-cov", "ruff"]
 
-  # package.json: ESLint, and the version of noble-secp256k1 the page vendors.
+  # package.json: ESLint, Prettier, and the version of noble-secp256k1 the
+  # page vendors.
   - package-ecosystem: npm
     directory: /
     schedule:

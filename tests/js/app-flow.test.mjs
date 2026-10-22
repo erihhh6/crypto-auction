@@ -81,14 +81,29 @@ function loadApp({
       reveal: "2027-01-15T08:30:00.000+00:00",
     },
     winner: null,
-    bidders: CREATED.bidders.map(({ bidder_id, name }) => ({ bidder_id, name, commitment_hex: null })),
+    bidders: CREATED.bidders.map(({ bidder_id, name }) => ({
+      bidder_id,
+      name,
+      commitment_hex: null,
+    })),
   };
   const routes = {
     "POST /api/auctions": CREATED,
     [`GET ${AUCTION}`]: state,
     [`POST ${AUCTION}/commit`]: { success: true, phase: "open", message: "ok" },
-    [`POST ${AUCTION}/prove`]: { success: true, proof_valid: true, phase: "committed", message: "ok" },
-    [`POST ${AUCTION}/reveal`]: { success: true, verified: true, phase: "proved", message: "ok", winner: null },
+    [`POST ${AUCTION}/prove`]: {
+      success: true,
+      proof_valid: true,
+      phase: "committed",
+      message: "ok",
+    },
+    [`POST ${AUCTION}/reveal`]: {
+      success: true,
+      verified: true,
+      phase: "proved",
+      message: "ok",
+      winner: null,
+    },
     [`DELETE ${AUCTION}`]: { success: true, message: "Auction deleted." },
     ...overrides,
   };
@@ -188,8 +203,22 @@ function loadApp({
   }
 
   return {
-    app: context, document, requests, cryptoCalls, alerts, timers, state, routes, downloads,
-    clipboard, location, commitThroughCard, cardError, toasts, leavingAsks, setupError,
+    app: context,
+    document,
+    requests,
+    cryptoCalls,
+    alerts,
+    timers,
+    state,
+    routes,
+    downloads,
+    clipboard,
+    location,
+    commitThroughCard,
+    cardError,
+    toasts,
+    leavingAsks,
+    setupError,
   };
 }
 
@@ -221,18 +250,24 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   // Prove: only the proof, computed locally for this auction and bidder.
   assert.deepEqual(sentTo(requests, `${AUCTION}/prove`), [{ proof: FAKE_PROOF }]);
   // Spread: the object comes from the VM's realm, whose Object prototype differs.
-  assert.deepEqual({ ...cryptoCalls[1].proveBid }, {
-    bid: 1500n,
-    blindingHex: BLINDING,
-    commitmentHex: COMMITMENT,
-    minBid: 100n,
-    maxBid: 5000n,
-    auctionId: CREATED.auction_id,
-    bidderId: "bidder_0",
-  });
+  assert.deepEqual(
+    { ...cryptoCalls[1].proveBid },
+    {
+      bid: 1500n,
+      blindingHex: BLINDING,
+      commitmentHex: COMMITMENT,
+      minBid: 100n,
+      maxBid: 5000n,
+      auctionId: CREATED.auction_id,
+      bidderId: "bidder_0",
+    },
+  );
 
   // Nothing before the reveal mentions the bid or the blinding factor.
-  const beforeReveal = requests.slice(0, requests.findIndex((r) => r.path === `${AUCTION}/reveal`));
+  const beforeReveal = requests.slice(
+    0,
+    requests.findIndex((r) => r.path === `${AUCTION}/reveal`),
+  );
   for (const { path, body } of beforeReveal) {
     const sent = JSON.stringify(body ?? {});
     assert.ok(!sent.includes(BLINDING), `${path} leaked the blinding factor`);
@@ -240,7 +275,9 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   }
 
   // Reveal: the opening, for the first time.
-  assert.deepEqual(sentTo(requests, `${AUCTION}/reveal`), [{ bid: 1500, randomness_hex: BLINDING }]);
+  assert.deepEqual(sentTo(requests, `${AUCTION}/reveal`), [
+    { bid: 1500, randomness_hex: BLINDING },
+  ]);
 });
 
 test("the page refreshes every few seconds, and just after a deadline", async () => {
@@ -344,7 +381,10 @@ test("screen readers hear when the auction moves to another phase", async () => 
 
   state.state = "committed";
   await app.refreshState();
-  assert.equal(heard(), "The commit phase is over: bidders now prove that their bids are in range.");
+  assert.equal(
+    heard(),
+    "The commit phase is over: bidders now prove that their bids are in range.",
+  );
   state.state = "finished";
   state.winner = null;
   await app.refreshState();
@@ -414,7 +454,10 @@ test("a join link opens the auction as that bidder, and only that bidder", async
   // Leaving takes the link out of the address bar, so a reload does not rejoin.
   await app.resetAuction();
   assert.equal(location.hash, "");
-  assert.deepEqual(requests.filter((r) => r.method === "DELETE"), []);
+  assert.deepEqual(
+    requests.filter((r) => r.method === "DELETE"),
+    [],
+  );
 });
 
 test("an invalid join link is explained on the setup page", async () => {
@@ -422,7 +465,9 @@ test("an invalid join link is explained on the setup page", async () => {
   const { document, setupError } = loadApp({
     created: false,
     hash,
-    routes: { [`GET ${AUCTION}/me`]: failure(401, "Missing or invalid join token for this auction.") },
+    routes: {
+      [`GET ${AUCTION}/me`]: failure(401, "Missing or invalid join token for this auction."),
+    },
   });
   await settle();
   assert.equal(setupError(), "Could not open this join link: it is not valid for this auction.");
@@ -591,7 +636,10 @@ test("a receipt saved before a reload lets the bidder carry on and reveal", asyn
   const after = loadApp({ created: false });
   Object.assign(after.state, { state: "proved" });
   Object.assign(after.state.bidders[0], { commitment_hex: COMMITMENT, proof_valid: true });
-  Object.assign(after.state.bidders[1], { commitment_hex: "02" + "dd".repeat(32), proof_valid: true });
+  Object.assign(after.state.bidders[1], {
+    commitment_hex: "02" + "dd".repeat(32),
+    proof_valid: true,
+  });
   await after.app.resumeFromReceipt(fileWith(file.text));
 
   assert.equal(after.setupError(), null);
@@ -605,16 +653,24 @@ test("a receipt saved before a reload lets the bidder carry on and reveal", asyn
 
   // A bidder is not the organizer: leaving does not try to delete the auction.
   await after.app.resetAuction();
-  assert.deepEqual(after.requests.filter((r) => r.method === "DELETE"), []);
+  assert.deepEqual(
+    after.requests.filter((r) => r.method === "DELETE"),
+    [],
+  );
 });
 
 test("a receipt for another commitment than the auction's is refused", async () => {
   const { app, state, setupError, document } = loadApp({ created: false });
   state.bidders[0].commitment_hex = "02" + "dd".repeat(32); // Alice committed to something else
   const receipt = {
-    type: "crypto-auction/opening-receipt", version: 1, auction_id: CREATED.auction_id,
-    bidder_id: "bidder_0", join_token: TOKENS.bidder_0, bid: 1500,
-    randomness_hex: BLINDING, commitment_hex: COMMITMENT,
+    type: "crypto-auction/opening-receipt",
+    version: 1,
+    auction_id: CREATED.auction_id,
+    bidder_id: "bidder_0",
+    join_token: TOKENS.bidder_0,
+    bid: 1500,
+    randomness_hex: BLINDING,
+    commitment_hex: COMMITMENT,
   };
   await app.resumeFromReceipt(fileWith(JSON.stringify(receipt)));
   assert.equal(
@@ -626,9 +682,14 @@ test("a receipt for another commitment than the auction's is refused", async () 
 
 test("files that are not sound receipts are refused before anything is asked", async () => {
   const valid = {
-    type: "crypto-auction/opening-receipt", version: 1, auction_id: CREATED.auction_id,
-    bidder_id: "bidder_0", join_token: TOKENS.bidder_0, bid: 1500,
-    randomness_hex: BLINDING, commitment_hex: COMMITMENT,
+    type: "crypto-auction/opening-receipt",
+    version: 1,
+    auction_id: CREATED.auction_id,
+    bidder_id: "bidder_0",
+    join_token: TOKENS.bidder_0,
+    bid: 1500,
+    randomness_hex: BLINDING,
+    commitment_hex: COMMITMENT,
   };
   const files = {
     "{not json": "it is not JSON.",

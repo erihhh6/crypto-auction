@@ -1,184 +1,203 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CryptoAuction — Sealed Bid Demo</title>
-  <link rel="stylesheet" href="/static/style.css" />
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
-</head>
-<body>
-  <!--
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CryptoAuction — Sealed Bid Demo</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <!--
     No inline styles or handlers (style="...", onclick="..."): the server's
     Content-Security-Policy forbids them. Elements are shown and hidden with
     the hidden attribute, and app.js connects every control (see wireUp).
   -->
 
-  <!-- ===== HEADER ===== -->
-  <header>
-    <div class="header-inner">
-      <div class="header-brand">
-        <span class="brand-icon" aria-hidden="true">🔐</span>
-        <h1>CryptoAuction</h1>
-        <span class="brand-sub">Sealed-Bid Cryptographic Protocol</span>
+    <!-- ===== HEADER ===== -->
+    <header>
+      <div class="header-inner">
+        <div class="header-brand">
+          <span class="brand-icon" aria-hidden="true">🔐</span>
+          <h1>CryptoAuction</h1>
+          <span class="brand-sub">Sealed-Bid Cryptographic Protocol</span>
+        </div>
+        <div
+          id="phase-indicator"
+          class="phase-indicator"
+          role="list"
+          aria-label="Auction phases"
+          hidden
+        >
+          <div class="phase-pill" role="listitem" data-phase="commit">
+            <span class="pill-dot"></span>COMMIT
+          </div>
+          <div class="phase-arrow" aria-hidden="true">→</div>
+          <div class="phase-pill" role="listitem" data-phase="prove">
+            <span class="pill-dot"></span>ZK PROVE
+          </div>
+          <div class="phase-arrow" aria-hidden="true">→</div>
+          <div class="phase-pill" role="listitem" data-phase="reveal">
+            <span class="pill-dot"></span>REVEAL
+          </div>
+          <div class="phase-arrow" aria-hidden="true">→</div>
+          <div class="phase-pill" role="listitem" data-phase="finished">
+            <span class="pill-dot"></span>FINISHED
+          </div>
+        </div>
       </div>
-      <div id="phase-indicator" class="phase-indicator" role="list" aria-label="Auction phases" hidden>
-        <div class="phase-pill" role="listitem" data-phase="commit">
-          <span class="pill-dot"></span>COMMIT
-        </div>
-        <div class="phase-arrow" aria-hidden="true">→</div>
-        <div class="phase-pill" role="listitem" data-phase="prove">
-          <span class="pill-dot"></span>ZK PROVE
-        </div>
-        <div class="phase-arrow" aria-hidden="true">→</div>
-        <div class="phase-pill" role="listitem" data-phase="reveal">
-          <span class="pill-dot"></span>REVEAL
-        </div>
-        <div class="phase-arrow" aria-hidden="true">→</div>
-        <div class="phase-pill" role="listitem" data-phase="finished">
-          <span class="pill-dot"></span>FINISHED
-        </div>
-      </div>
-    </div>
-  </header>
+    </header>
 
-  <!-- ===== SETUP PANEL ===== -->
-  <!-- A <main> like the auction view: only one of the two is ever shown. -->
-  <main id="setup-panel" class="setup-panel">
-    <div class="setup-card">
-      <h2>Configure Auction</h2>
-      <p class="setup-desc">
-        Set up a sealed-bid auction demonstrating a 3-phase cryptographic protocol:
-        <strong>Commit → ZK Prove → Reveal</strong>.
+    <!-- ===== SETUP PANEL ===== -->
+    <!-- A <main> like the auction view: only one of the two is ever shown. -->
+    <main id="setup-panel" class="setup-panel">
+      <div class="setup-card">
+        <h2>Configure Auction</h2>
+        <p class="setup-desc">
+          Set up a sealed-bid auction demonstrating a 3-phase cryptographic protocol:
+          <strong>Commit → ZK Prove → Reveal</strong>.
+        </p>
+
+        <div class="form-grid">
+          <label for="item-name">Item Name</label>
+          <input id="item-name" type="text" placeholder="e.g. Vintage Watch" value="Rare NFT #42" />
+
+          <label for="min-bid">Min Bid ($)</label>
+          <input id="min-bid" type="number" value="100" min="1" />
+
+          <label for="max-bid">Max Bid ($)</label>
+          <input id="max-bid" type="number" value="10000" min="2" />
+
+          <label for="phase-minutes">Minutes per Phase</label>
+          <input id="phase-minutes" type="number" value="10" min="1" max="10080" />
+        </div>
+
+        <div class="bidders-setup">
+          <label id="bidders-label">Bidders</label>
+          <div id="bidder-inputs" role="group" aria-labelledby="bidders-label">
+            <div class="bidder-input-row">
+              <input
+                type="text"
+                class="bidder-name-input"
+                placeholder="Bidder name"
+                value="Alice"
+                aria-label="Bidder name"
+              />
+              <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
+            </div>
+            <div class="bidder-input-row">
+              <input
+                type="text"
+                class="bidder-name-input"
+                placeholder="Bidder name"
+                value="Bob"
+                aria-label="Bidder name"
+              />
+              <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
+            </div>
+            <div class="bidder-input-row">
+              <input
+                type="text"
+                class="bidder-name-input"
+                placeholder="Bidder name"
+                value="Carol"
+                aria-label="Bidder name"
+              />
+              <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
+            </div>
+          </div>
+          <button id="btn-add-bidder">+ Add Bidder</button>
+        </div>
+
+        <div class="setup-buttons">
+          <button id="btn-create">Start Auction →</button>
+          <button id="btn-demo">▶ Watch Demo</button>
+        </div>
+        <div id="setup-error" class="error-msg" role="alert" hidden></div>
+
+        <div class="resume">
+          <label for="receipt-file">
+            Reloaded the page during an auction? Continue as a bidder with the receipt saved for
+            them:
+          </label>
+          <input id="receipt-file" type="file" accept=".json,application/json" />
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== DEMO BANNER ===== -->
+    <div id="demo-banner" hidden>
+      <span id="demo-status-text" role="status">Demo running…</span>
+      <button id="btn-stop-demo">■ Stop Demo</button>
+    </div>
+
+    <!-- ===== MAIN AUCTION VIEW ===== -->
+    <main id="auction-view" hidden>
+      <!-- Left: Bidders -->
+      <section id="bidders-panel">
+        <div class="panel-header">
+          <h2>Bidders</h2>
+          <span id="auction-item-label" class="item-label"></span>
+        </div>
+        <div id="bidder-cards"></div>
+      </section>
+
+      <!-- Center: Protocol Log -->
+      <section id="log-panel">
+        <div class="panel-header">
+          <h2>Protocol Log</h2>
+          <button id="btn-clear-log" class="btn-clear-log">Clear</button>
+        </div>
+
+        <div class="log-section">
+          <div class="log-section-title public-title">
+            <span class="log-dot public-dot"></span>Public — visible to all
+          </div>
+          <div id="public-log" role="log" aria-label="Public protocol log"></div>
+        </div>
+
+        <div class="log-section">
+          <div class="log-section-title private-title">
+            <span class="log-dot private-dot"></span>Private — bidder only
+          </div>
+          <div id="private-log" role="log" aria-label="Private protocol log"></div>
+        </div>
+      </section>
+
+      <!-- Right: Actions -->
+      <section id="actions-panel">
+        <div class="panel-header">
+          <h2>Actions</h2>
+          <button id="btn-reset" class="btn-reset">Reset</button>
+        </div>
+        <!-- Focusable from script only (tabindex -1): where focus goes after the winner dialog -->
+        <div id="actions-content" tabindex="-1"></div>
+        <!-- On the organizer's page: each bidder's join link (app.js renderJoinLinks) -->
+        <div id="join-links" class="action-section join-links" hidden></div>
+      </section>
+    </main>
+
+    <!-- ===== WINNER DIALOG: a native modal <dialog> (app.js showWinnerModal) ===== -->
+    <dialog id="winner-modal" aria-labelledby="winner-title">
+      <div class="winner-trophy" aria-hidden="true">🏆</div>
+      <h2 id="winner-title">Auction Complete!</h2>
+      <div id="winner-name" class="winner-name"></div>
+      <div id="winner-bid" class="winner-bid"></div>
+      <p class="winner-desc">
+        Bid verified against cryptographic commitment.<br />
+        Result is publicly auditable.
       </p>
+      <button id="btn-close-winner">Close</button>
+    </dialog>
 
-      <div class="form-grid">
-        <label for="item-name">Item Name</label>
-        <input id="item-name" type="text" placeholder="e.g. Vintage Watch" value="Rare NFT #42" />
+    <!-- ===== TOASTS: problems that concern the whole page (app.js showToast) ===== -->
+    <div id="toasts" class="toasts"></div>
 
-        <label for="min-bid">Min Bid ($)</label>
-        <input id="min-bid" type="number" value="100" min="1" />
+    <!-- Read out by screen readers: what changes without the reader's doing (app.js announce) -->
+    <div id="announcer" class="sr-only" role="status"></div>
 
-        <label for="max-bid">Max Bid ($)</label>
-        <input id="max-bid" type="number" value="10000" min="2" />
-
-        <label for="phase-minutes">Minutes per Phase</label>
-        <input id="phase-minutes" type="number" value="10" min="1" max="10080" />
-      </div>
-
-      <div class="bidders-setup">
-        <label id="bidders-label">Bidders</label>
-        <div id="bidder-inputs" role="group" aria-labelledby="bidders-label">
-          <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Alice"
-                   aria-label="Bidder name" />
-            <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
-          </div>
-          <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Bob"
-                   aria-label="Bidder name" />
-            <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
-          </div>
-          <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Carol"
-                   aria-label="Bidder name" />
-            <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
-          </div>
-        </div>
-        <button id="btn-add-bidder">+ Add Bidder</button>
-      </div>
-
-      <div class="setup-buttons">
-        <button id="btn-create">Start Auction →</button>
-        <button id="btn-demo">▶ Watch Demo</button>
-      </div>
-      <div id="setup-error" class="error-msg" role="alert" hidden></div>
-
-      <div class="resume">
-        <label for="receipt-file">
-          Reloaded the page during an auction? Continue as a bidder with the
-          receipt saved for them:
-        </label>
-        <input id="receipt-file" type="file" accept=".json,application/json" />
-      </div>
-    </div>
-  </main>
-
-  <!-- ===== DEMO BANNER ===== -->
-  <div id="demo-banner" hidden>
-    <span id="demo-status-text" role="status">Demo running…</span>
-    <button id="btn-stop-demo">■ Stop Demo</button>
-  </div>
-
-  <!-- ===== MAIN AUCTION VIEW ===== -->
-  <main id="auction-view" hidden>
-
-    <!-- Left: Bidders -->
-    <section id="bidders-panel">
-      <div class="panel-header">
-        <h2>Bidders</h2>
-        <span id="auction-item-label" class="item-label"></span>
-      </div>
-      <div id="bidder-cards"></div>
-    </section>
-
-    <!-- Center: Protocol Log -->
-    <section id="log-panel">
-      <div class="panel-header">
-        <h2>Protocol Log</h2>
-        <button id="btn-clear-log" class="btn-clear-log">Clear</button>
-      </div>
-
-      <div class="log-section">
-        <div class="log-section-title public-title">
-          <span class="log-dot public-dot"></span>Public — visible to all
-        </div>
-        <div id="public-log" role="log" aria-label="Public protocol log"></div>
-      </div>
-
-      <div class="log-section">
-        <div class="log-section-title private-title">
-          <span class="log-dot private-dot"></span>Private — bidder only
-        </div>
-        <div id="private-log" role="log" aria-label="Private protocol log"></div>
-      </div>
-    </section>
-
-    <!-- Right: Actions -->
-    <section id="actions-panel">
-      <div class="panel-header">
-        <h2>Actions</h2>
-        <button id="btn-reset" class="btn-reset">Reset</button>
-      </div>
-      <!-- Focusable from script only (tabindex -1): where focus goes after the winner dialog -->
-      <div id="actions-content" tabindex="-1"></div>
-      <!-- On the organizer's page: each bidder's join link (app.js renderJoinLinks) -->
-      <div id="join-links" class="action-section join-links" hidden></div>
-    </section>
-
-  </main>
-
-  <!-- ===== WINNER DIALOG: a native modal <dialog> (app.js showWinnerModal) ===== -->
-  <dialog id="winner-modal" aria-labelledby="winner-title">
-    <div class="winner-trophy" aria-hidden="true">🏆</div>
-    <h2 id="winner-title">Auction Complete!</h2>
-    <div id="winner-name" class="winner-name"></div>
-    <div id="winner-bid" class="winner-bid"></div>
-    <p class="winner-desc">
-      Bid verified against cryptographic commitment.<br/>
-      Result is publicly auditable.
-    </p>
-    <button id="btn-close-winner">Close</button>
-  </dialog>
-
-  <!-- ===== TOASTS: problems that concern the whole page (app.js showToast) ===== -->
-  <div id="toasts" class="toasts"></div>
-
-  <!-- Read out by screen readers: what changes without the reader's doing (app.js announce) -->
-  <div id="announcer" class="sr-only" role="status"></div>
-
-  <!-- Bidder-side cryptography (commitments and range proofs); sets window.auctionCrypto. -->
-  <script type="module" src="/static/auction-crypto.js"></script>
-  <script src="/static/app.js"></script>
-</body>
+    <!-- Bidder-side cryptography (commitments and range proofs); sets window.auctionCrypto. -->
+    <script type="module" src="/static/auction-crypto.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
 </html>
