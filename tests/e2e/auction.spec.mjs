@@ -38,22 +38,28 @@ async function createAuction(page, { item, bidders }) {
   return links;
 }
 
+// The steps are taken with the keyboard. A poll can grow another card (a
+// commitment line, a "revealed" line) and move a button just as the mouse
+// clicks where it was, which happened in WebKit; the focus stays put.
+
+// Enter in the bid field commits, as in a form.
 async function commit(page, name, bid) {
-  await card(page, name).getByRole("spinbutton").fill(String(bid));
-  await card(page, name).getByRole("button", { name: "Commit" }).click();
+  const field = card(page, name).getByRole("spinbutton");
+  await field.fill(String(bid));
+  await field.press("Enter");
   await done(page, name, "COMMIT");
 }
 
 // The button shows once every bidder has committed, which a page learns at
-// its next poll: the click waits for it. "done" means the proof was valid.
+// its next poll: the locator waits for it. "done" means the proof was valid.
 async function prove(page, name) {
-  await card(page, name).getByRole("button", { name: "ZK Prove" }).click();
+  await card(page, name).getByRole("button", { name: "ZK Prove" }).press("Enter");
   await done(page, name, "PROVE");
 }
 
 // "done" means the opening matched the commitment.
 async function reveal(page, name) {
-  await card(page, name).getByRole("button", { name: "Reveal" }).click();
+  await card(page, name).getByRole("button", { name: "Reveal" }).press("Enter");
   await done(page, name, "REVEAL");
 }
 

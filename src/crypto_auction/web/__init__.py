@@ -56,6 +56,8 @@ def create_app(
     supply the AuctionService instead, e.g. one whose clock a test controls.
     """
     app = Flask(__name__)
+    # Larger bodies are refused (413) before they are read; see the constant.
+    app.config["MAX_CONTENT_LENGTH"] = api.MAX_REQUEST_BYTES
     app.config.from_prefixed_env("CRYPTO_AUCTION")
     if config is not None:
         app.config.update(config)

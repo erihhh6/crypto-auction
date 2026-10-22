@@ -1,5 +1,6 @@
 """Tests for the REST API (crypto_auction.web), exercised through Flask's test client."""
 
+import json
 import os
 import unittest
 from datetime import datetime
@@ -20,8 +21,10 @@ from crypto_auction.range_proof import prove_range
 from crypto_auction.service import AuctionService
 from crypto_auction.web import create_app
 from crypto_auction.web.api import (
+    MAX_JSON_INT,
     MAX_NAME_LENGTH,
     MAX_PHASE_SECONDS,
+    MAX_REQUEST_BYTES,
     MIN_PHASE_SECONDS,
     SERVICE_KEY,
 )
@@ -694,6 +697,30 @@ class TestRequestFormat(ApiTestCase):
         commitment = f'{{"commitment_hex": "{encode_point(commit(1200).point)}"}}'
         resp = self.client.post(self.url("/commit"), data=commitment, content_type="text/plain")
         self.assert_error(resp, 415)
+
+    # Anyone may create an auction: without a cap, one request could make the
+    # server read and parse any amount of JSON (a 94 MB body took 421 MB).
+    def test_an_oversized_body_is_refused(self):
+        names = ",".join(['"' + "a" * 90 + '"'] * 1000)
+        body = f'{{"item_name": "x", "min_bid": 1, "max_bid": 2, "bidders": [{names}]}}'
+        self.assertGreater(len(body), MAX_REQUEST_BYTES)
+        resp = self.client.post("/api/auctions", data=body, content_type="application/json")
+        self.assert_error(resp, 413)
+
+    def test_the_largest_proof_the_api_can_ask_for_fits(self):
+        # The widest range the API accepts needs 53 bits per side.
+        self.create(min_bid=0, max_bid=MAX_JSON_INT)
+        secrets = self.commit_all({"bidder_0": MAX_JSON_INT, "bidder_1": 0, "bidder_2": 1})
+        proof = self.make_proof("bidder_0", secrets["bidder_0"])
+        body = json.dumps({"proof": proof}, indent=2)  # even with generous whitespace
+        self.assertLess(len(body), MAX_REQUEST_BYTES)
+        resp = self.client.post(
+            self.url("/prove"),
+            data=body,
+            content_type="application/json",
+            headers=bearer(self.tokens["bidder_0"]),
+        )
+        self.assertTrue(self.assert_ok(resp)["proof_valid"])
 
     def test_unknown_route_gets_a_json_404(self):
         self.assert_error(self.client.get("/api/nope"), 404)

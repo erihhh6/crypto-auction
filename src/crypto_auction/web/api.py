@@ -28,7 +28,8 @@ Deadlines:
 
 Request rules:
   Every POST must be sent as application/json (415 otherwise) with a JSON object
-  body (400 otherwise). Integers must lie in [0, 2**53 - 1]. Every error,
+  body (400 otherwise) of at most 64 KiB (413 otherwise). Integers must lie in
+  [0, 2**53 - 1]. Every error,
   including unknown routes and unexpected server errors, is returned as
   {"success": false, "error": "<reason>"}.
 
@@ -65,6 +66,11 @@ MAX_NAME_LENGTH = 100
 # short enough that an auction does not stay open indefinitely.
 MIN_PHASE_SECONDS = 10
 MAX_PHASE_SECONDS = 7 * 24 * 60 * 60
+# Largest request body accepted (413 beyond; create_app sets it). Anyone may
+# create an auction, so without a cap one request could make the server read
+# and parse any amount of JSON. The largest legitimate body, a range proof for
+# the widest range allowed (53 bits per side), is about 38 KB, 46 KB indented.
+MAX_REQUEST_BYTES = 64 * 1024
 
 # Key under which create_app() stores each app's AuctionService.
 SERVICE_KEY = "crypto_auction"
