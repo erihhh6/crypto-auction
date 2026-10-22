@@ -107,11 +107,22 @@ class TestBidderIdentity(unittest.TestCase):
 
     def test_auction_keeps_only_token_digests(self):
         auction = make_auction()
-        tokens = auction.issue_join_tokens()
+        tokens = [auction.issue_organizer_token(), *auction.issue_join_tokens().values()]
         # Everything the auction holds, including each BidderState.
         held = repr(vars(auction)) + repr(auction.get_public_state())
-        for token in tokens.values():
+        for token in tokens:
             self.assertNotIn(token, held)
+
+    def test_the_organizer_token_is_no_bidders_and_vice_versa(self):
+        auction = make_auction()
+        self.assertFalse(auction.is_organizer(""))  # none issued yet
+        organizer = auction.issue_organizer_token()
+        join_tokens = auction.issue_join_tokens()
+        self.assertTrue(auction.is_organizer(organizer))
+        self.assertIsNone(auction.authenticate(organizer))
+        for token in join_tokens.values():
+            self.assertFalse(auction.is_organizer(token))
+        self.assertFalse(make_auction().is_organizer(organizer))  # another auction's
 
 
 WINDOW = 60  # seconds per step in the deadline tests

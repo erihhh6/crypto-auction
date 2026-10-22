@@ -92,9 +92,10 @@ class TestBrowserInterop(unittest.TestCase):
         # until the reveal.
         client = create_app({"TESTING": True}).test_client()
         created = client.post(
-            "/api/create",
+            "/api/auctions",
             json={"item_name": "x", "min_bid": 100, "max_bid": 5000, "bidders": ["A", "B"]},
         ).get_json()
+        url = f"/api/auctions/{created['auction_id']}"
         auth = {
             b["bidder_id"]: {"Authorization": f"Bearer {b['join_token']}"}
             for b in created["bidders"]
@@ -104,7 +105,7 @@ class TestBrowserInterop(unittest.TestCase):
         openings = dict(zip(bids, commitments, strict=True))
         for bidder_id, c in openings.items():
             body = {"commitment_hex": c["commitment_hex"]}
-            resp = client.post("/api/commit", json=body, headers=auth[bidder_id])
+            resp = client.post(f"{url}/commit", json=body, headers=auth[bidder_id])
             self.assertEqual(resp.status_code, 200)
 
         proofs = browser(
@@ -123,13 +124,13 @@ class TestBrowserInterop(unittest.TestCase):
         )
         for bidder_id, proved in zip(openings, proofs, strict=True):
             resp = client.post(
-                "/api/prove", json={"proof": proved["proof"]}, headers=auth[bidder_id]
+                f"{url}/prove", json={"proof": proved["proof"]}, headers=auth[bidder_id]
             )
             self.assertTrue(resp.get_json()["proof_valid"])
 
         for bidder_id, c in openings.items():
             body = {"bid": bids[bidder_id], "randomness_hex": c["randomness_hex"]}
-            result = client.post("/api/reveal", json=body, headers=auth[bidder_id]).get_json()
+            result = client.post(f"{url}/reveal", json=body, headers=auth[bidder_id]).get_json()
             self.assertTrue(result["verified"])
         self.assertEqual(result["winner"]["bidder_id"], "bidder_1")
 

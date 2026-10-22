@@ -22,7 +22,8 @@ from tests.support import FakeClock
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
-BIDDER_ENDPOINTS = ("/api/commit", "/api/prove", "/api/reveal")
+STEPS = ("commit", "prove", "reveal")
+UNKNOWN_ID = "0" * 32
 
 
 def bearer(token):
@@ -35,7 +36,7 @@ def opening(secret):
 
 
 class ApiTestCase(unittest.TestCase):
-    """Gives every test its own app, and so its own empty auction, on a fake clock."""
+    """Gives every test its own app, with no auctions yet, on a fake clock."""
 
     def setUp(self):
         self.clock = FakeClock()
@@ -43,14 +44,20 @@ class ApiTestCase(unittest.TestCase):
         app = create_app({"TESTING": True}, service=AuctionService(clock=self.clock))
         self.client = app.test_client()
 
+    def url(self, suffix=""):
+        """The URL of the auction created last, or of one of its actions."""
+        return f"/api/auctions/{self.auction_id}{suffix}"
+
     def post(self, path, **body):
         return self.client.post(path, json=body)
 
-    def post_as(self, bidder_id, path, /, **body):
-        """POST as a bidder, authenticated by their join token as the browser does."""
-        return self.client.post(path, json=body, headers=bearer(self.tokens[bidder_id]))
+    def post_as(self, bidder_id, step, /, **body):
+        """POST a step as a bidder, authenticated by their join token as the browser does."""
+        headers = bearer(self.tokens[bidder_id])
+        return self.client.post(self.url(f"/{step}"), json=body, headers=headers)
 
     def create(self, **overrides):
+        """Create an auction; on success it becomes the one url() and post_as() address."""
         body = {
             "item_name": "Rare NFT #42",
             "min_bid": 100,
@@ -58,18 +65,26 @@ class ApiTestCase(unittest.TestCase):
             "bidders": ["Alice", "Bob", "Carol"],
         }
         body.update(overrides)
-        resp = self.post("/api/create", **body)
-        if resp.status_code == 200:
-            self.tokens = {b["bidder_id"]: b["join_token"] for b in resp.get_json()["bidders"]}
+        resp = self.post("/api/auctions", **body)
+        if resp.status_code == 201:
+            data = resp.get_json()
+            self.auction_id = data["auction_id"]
+            self.organizer_token = data["organizer_token"]
+            self.tokens = {b["bidder_id"]: b["join_token"] for b in data["bidders"]}
         return resp
 
     def state(self):
-        return self.client.get("/api/state").get_json()
+        return self.client.get(self.url()).get_json()
 
-    def assert_ok(self, resp):
-        self.assertEqual(resp.status_code, 200, resp.get_json())
+    def assert_ok(self, resp, status=200):
+        self.assertEqual(resp.status_code, status, resp.get_json())
         self.assertTrue(resp.get_json()["success"])
         return resp.get_json()
+
+    def assert_created(self, resp):
+        data = self.assert_ok(resp, 201)
+        self.assertEqual(resp.headers["Location"], f"/api/auctions/{data['auction_id']}")
+        return data
 
     def assert_error(self, resp, status=400):
         """Errors use the JSON envelope {"success": false, "error": "<reason>"}."""
@@ -89,7 +104,7 @@ class ApiTestCase(unittest.TestCase):
         for bidder_id, bid in bids.items():
             c = commit(bid)
             commitment_hex = encode_point(c.point)
-            self.assert_ok(self.post_as(bidder_id, "/api/commit", commitment_hex=commitment_hex))
+            self.assert_ok(self.post_as(bidder_id, "commit", commitment_hex=commitment_hex))
             secrets[bidder_id] = {
                 "bid": bid,
                 "randomness_hex": encode_scalar(c.blinding),
@@ -113,7 +128,7 @@ class ApiTestCase(unittest.TestCase):
 
     def prove(self, bidder_id, secret, **kwargs):
         proof = self.make_proof(bidder_id, secret, **kwargs)
-        return self.post_as(bidder_id, "/api/prove", proof=proof)
+        return self.post_as(bidder_id, "prove", proof=proof)
 
     def prove_all(self, secrets):
         for bidder_id, secret in secrets.items():
@@ -127,23 +142,19 @@ class TestIndex(ApiTestCase):
         self.assertIn("text/html", resp.content_type)
 
 
-class TestNoAuction(ApiTestCase):
-    def test_endpoints_return_404_before_create(self):
-        requests = [
-            ("GET", "/api/state"),
-            ("POST", "/api/commit"),
-            ("POST", "/api/prove"),
-            ("POST", "/api/reveal"),
-        ]
-        for method, path in requests:
-            with self.subTest(path=path):
-                resp = self.client.open(path, method=method, json={})
+class TestUnknownAuction(ApiTestCase):
+    def test_every_auction_endpoint_returns_404(self):
+        self.auction_id = UNKNOWN_ID
+        requests = [("GET", ""), ("DELETE", "")] + [("POST", f"/{step}") for step in STEPS]
+        for method, suffix in requests:
+            with self.subTest(method=method, path=self.url(suffix)):
+                resp = self.client.open(self.url(suffix), method=method, json={})
                 self.assert_error(resp, 404)
 
 
 class TestCreate(ApiTestCase):
     def test_returns_bidders_with_generated_ids(self):
-        data = self.assert_ok(self.create())
+        data = self.assert_created(self.create())
         self.assertEqual(data["item_name"], "Rare NFT #42")
         self.assertEqual((data["min_bid"], data["max_bid"]), (100, 5000))
         self.assertEqual(
@@ -152,7 +163,7 @@ class TestCreate(ApiTestCase):
         )
 
     def test_strips_whitespace_from_names(self):
-        data = self.assert_ok(self.create(item_name="  Watch  ", bidders=[" Alice ", "Bob\t"]))
+        data = self.assert_created(self.create(item_name="  Watch  ", bidders=[" Alice ", "Bob\t"]))
         self.assertEqual(data["item_name"], "Watch")
         self.assertEqual([b["name"] for b in data["bidders"]], ["Alice", "Bob"])
 
@@ -161,7 +172,7 @@ class TestCreate(ApiTestCase):
             with self.subTest(field=field):
                 body = {"item_name": "x", "min_bid": 1, "max_bid": 2, "bidders": ["A", "B"]}
                 del body[field]
-                self.assert_error(self.post("/api/create", **body))
+                self.assert_error(self.post("/api/auctions", **body))
 
     def test_rejects_non_integer_bounds(self):
         self.assert_error(self.create(min_bid="cheap"))
@@ -176,24 +187,15 @@ class TestCreate(ApiTestCase):
                 self.assert_error(self.create(min_bid=min_bid, max_bid=max_bid))
 
     def test_bidder_count_limits(self):
-        cases = {1: 400, 2: 200, 10: 200, 11: 400}
+        cases = {1: 400, 2: 201, 10: 201, 11: 400}
         for count, status in cases.items():
             with self.subTest(count=count):
                 resp = self.create(bidders=[f"Bidder {i}" for i in range(count)])
                 self.assertEqual(resp.status_code, status)
 
-    def test_create_replaces_existing_auction(self):
-        self.create()
-        self.commit_all({"bidder_0": 1200})
-        self.assert_ok(self.create(item_name="Second item"))
-        state = self.state()
-        self.assertEqual(state["item_name"], "Second item")
-        self.assertEqual(state["state"], "open")
-        self.assertTrue(all(b["commitment_hex"] is None for b in state["bidders"]))
-
     def test_rejects_integers_javascript_cannot_represent_exactly(self):
         self.assert_error(self.create(max_bid=2**53))
-        self.assert_ok(self.create(max_bid=2**53 - 1))
+        self.assert_created(self.create(max_bid=2**53 - 1))
 
     def test_rejects_negative_min_bid(self):
         self.assert_error(self.create(min_bid=-50))
@@ -219,9 +221,47 @@ class TestCreate(ApiTestCase):
 
     def test_name_length_limit(self):
         longest = "x" * MAX_NAME_LENGTH
-        self.assert_ok(self.create(item_name=longest, bidders=[longest, "Bob"]))
+        self.assert_created(self.create(item_name=longest, bidders=[longest, "Bob"]))
         self.assert_error(self.create(item_name=longest + "x"))
         self.assert_error(self.create(bidders=[longest + "x", "Bob"]))
+
+
+class TestSeveralAuctions(ApiTestCase):
+    def test_auctions_run_independently(self):
+        self.create(item_name="First")
+        first, first_tokens = self.auction_id, self.tokens
+        self.commit_all({"bidder_0": 1200})
+        self.create(item_name="Second")
+        self.assertNotEqual(self.auction_id, first)
+
+        second = self.state()
+        self.assertEqual(second["item_name"], "Second")
+        self.assertTrue(all(b["commitment_hex"] is None for b in second["bidders"]))
+        self.auction_id, self.tokens = first, first_tokens
+        self.assertIsNotNone(self.state()["bidders"][0]["commitment_hex"])
+
+    def test_tokens_work_only_in_their_own_auction(self):
+        # Bidder ids repeat across auctions (bidder_0, ...); tokens do not.
+        self.create()
+        first_tokens, first_organizer = self.tokens, self.organizer_token
+        self.create()
+        body = {"commitment_hex": encode_point(commit(1200).point)}
+        resp = self.client.post(
+            self.url("/commit"), json=body, headers=bearer(first_tokens["bidder_0"])
+        )
+        self.assert_error(resp, 401)
+        resp = self.client.delete(self.url(), headers=bearer(first_organizer))
+        self.assert_error(resp, 401)
+
+    def test_the_number_of_auctions_is_capped(self):
+        service = AuctionService(clock=self.clock, max_auctions=2)
+        self.client = create_app({"TESTING": True}, service=service).test_client()
+        self.assert_created(self.create())
+        self.assert_created(self.create())
+        self.assert_error(self.create(), 503)
+        # Deleting one makes room again.
+        self.assert_ok(self.client.delete(self.url(), headers=bearer(self.organizer_token)))
+        self.assert_created(self.create())
 
 
 class TestState(ApiTestCase):
@@ -248,21 +288,19 @@ class TestCommit(ApiTestCase):
     def test_server_receives_only_the_commitment(self):
         c = commit(1200)
         commitment_hex = encode_point(c.point)
-        data = self.assert_ok(
-            self.post_as("bidder_0", "/api/commit", commitment_hex=commitment_hex)
-        )
+        data = self.assert_ok(self.post_as("bidder_0", "commit", commitment_hex=commitment_hex))
         self.assertEqual(set(data), {"success", "phase", "message"})  # no secrets either way
         self.assertEqual(self.state()["bidders"][0]["commitment_hex"], commitment_hex)
 
     def test_rejects_double_commit(self):
         self.commit_all({"bidder_0": 1200})
         commitment_hex = encode_point(commit(1300).point)
-        resp = self.post_as("bidder_0", "/api/commit", commitment_hex=commitment_hex)
+        resp = self.post_as("bidder_0", "commit", commitment_hex=commitment_hex)
         self.assert_error(resp)
 
     def test_rejects_a_copy_of_another_bidders_commitment(self):
         alices = self.commit_all({"bidder_0": 1200})["bidder_0"]["commitment_hex"]
-        self.assert_error(self.post_as("bidder_2", "/api/commit", commitment_hex=alices))
+        self.assert_error(self.post_as("bidder_2", "commit", commitment_hex=alices))
         self.assertIsNone(self.state()["bidders"][2]["commitment_hex"])
         # Carol can still commit to a bid of her own.
         self.commit_all({"bidder_2": 1500})
@@ -280,7 +318,7 @@ class TestCommit(ApiTestCase):
         for label, value in cases.items():
             with self.subTest(label):
                 body = {} if value is None else {"commitment_hex": value}
-                self.assert_error(self.post_as("bidder_0", "/api/commit", **body))
+                self.assert_error(self.post_as("bidder_0", "commit", **body))
         self.assertIsNone(self.state()["bidders"][0]["commitment_hex"])
 
     def test_phase_advances_once_everyone_committed(self):
@@ -327,7 +365,7 @@ class TestProve(ApiTestCase):
         for label, proof in cases.items():
             with self.subTest(label):
                 body = {} if proof is None else {"proof": proof}
-                self.assert_error(self.post_as("bidder_0", "/api/prove", **body))
+                self.assert_error(self.post_as("bidder_0", "prove", **body))
         # Rejected before reaching the auction, so the bidder can still prove.
         self.assertTrue(self.assert_ok(self.prove("bidder_0", secrets["bidder_0"]))["proof_valid"])
 
@@ -335,7 +373,7 @@ class TestProve(ApiTestCase):
         secrets = self.commit_all()
         cases = {
             "bidder_0": {"bounds": (0, 10**9)},  # another range
-            "bidder_1": {"auction_id": "0" * 32},  # another auction
+            "bidder_1": {"auction_id": UNKNOWN_ID},  # another auction
         }
         for bidder_id, kwargs in cases.items():
             with self.subTest(**kwargs):
@@ -347,7 +385,7 @@ class TestProve(ApiTestCase):
         # bound to Alice's bidder id, so it says nothing about Carol's bid.
         secrets = self.commit_all()
         alices_proof = self.make_proof("bidder_0", secrets["bidder_0"])
-        data = self.assert_ok(self.post_as("bidder_2", "/api/prove", proof=alices_proof))
+        data = self.assert_ok(self.post_as("bidder_2", "prove", proof=alices_proof))
         self.assertFalse(data["proof_valid"])
         self.assertIsNone(self.state()["bidders"][0]["proof_valid"])  # Alice is unaffected
 
@@ -382,7 +420,7 @@ class TestReveal(ApiTestCase):
         self.create()
 
     def reveal(self, bidder_id, secret):
-        return self.post_as(bidder_id, "/api/reveal", **opening(secret))
+        return self.post_as(bidder_id, "reveal", **opening(secret))
 
     def test_rejects_reveal_before_everyone_proved(self):
         secrets = self.commit_all()
@@ -423,11 +461,11 @@ class TestReveal(ApiTestCase):
     def test_rejects_malformed_payload(self):
         secrets = self.commit_all()
         self.prove_all(secrets)
-        self.assert_error(self.post_as("bidder_0", "/api/reveal", bid=1200))
+        self.assert_error(self.post_as("bidder_0", "reveal", bid=1200))
         for bad_bid in ("lots", 1200.0, True):
             with self.subTest(bid=bad_bid):
                 typo = {**opening(secrets["bidder_0"]), "bid": bad_bid}
-                self.assert_error(self.post_as("bidder_0", "/api/reveal", **typo))
+                self.assert_error(self.post_as("bidder_0", "reveal", **typo))
 
     def test_rejects_double_reveal(self):
         secrets = self.commit_all()
@@ -446,7 +484,7 @@ class TestReveal(ApiTestCase):
         for bad in malformed:
             with self.subTest(bad=bad):
                 typo = {**opening(secrets["bidder_0"]), "randomness_hex": bad}
-                self.assert_error(self.post_as("bidder_0", "/api/reveal", **typo))
+                self.assert_error(self.post_as("bidder_0", "reveal", **typo))
         # Rejected before reaching the auction, so the bidder can still reveal.
         data = self.assert_ok(self.reveal("bidder_0", secrets["bidder_0"]))
         self.assertTrue(data["verified"])
@@ -485,7 +523,7 @@ class TestDeadlines(ApiTestCase):
         self.assertEqual(server_time, FakeClock.START)
 
     def test_each_window_can_be_set(self):
-        self.assert_ok(self.create(commit_seconds=60, prove_seconds=120, reveal_seconds=30))
+        self.assert_created(self.create(commit_seconds=60, prove_seconds=120, reveal_seconds=30))
         self.assertEqual(self.deadlines(), {"commit": 60, "prove": 180, "reveal": 210})
 
     def test_window_lengths_must_be_integers_within_bounds(self):
@@ -496,7 +534,7 @@ class TestDeadlines(ApiTestCase):
                     self.assert_error(self.create(**{field: value}))
             for value in (MIN_PHASE_SECONDS, MAX_PHASE_SECONDS):
                 with self.subTest(field=field, value=value):
-                    self.assert_ok(self.create(**{field: value}))
+                    self.assert_created(self.create(**{field: value}))
 
     def test_a_late_commitment_is_rejected_and_the_auction_moves_on(self):
         self.create(commit_seconds=60)
@@ -504,7 +542,7 @@ class TestDeadlines(ApiTestCase):
         self.clock.advance(60)
 
         late = encode_point(commit(1500).point)
-        body = self.assert_error(self.post_as("bidder_2", "/api/commit", commitment_hex=late))
+        body = self.assert_error(self.post_as("bidder_2", "commit", commitment_hex=late))
         self.assertIn("missed the commit deadline", body["error"])
         state = self.state()
         self.assertEqual(state["state"], "committed")
@@ -515,7 +553,7 @@ class TestDeadlines(ApiTestCase):
         secrets = self.commit_all()
         self.prove_all(secrets)
         for bidder_id in ("bidder_0", "bidder_2"):  # Bob, the highest bidder, stays silent
-            self.assert_ok(self.post_as(bidder_id, "/api/reveal", **opening(secrets[bidder_id])))
+            self.assert_ok(self.post_as(bidder_id, "reveal", **opening(secrets[bidder_id])))
         self.assertEqual(self.state()["state"], "proved")
 
         self.clock.advance(1800)
@@ -523,7 +561,7 @@ class TestDeadlines(ApiTestCase):
         self.assertEqual(state["state"], "finished")
         self.assertEqual(state["winner"]["name"], "Carol")
         self.assertEqual(state["bidders"][1]["missed_deadline"], "reveal")
-        self.assert_error(self.post_as("bidder_1", "/api/reveal", **opening(secrets["bidder_1"])))
+        self.assert_error(self.post_as("bidder_1", "reveal", **opening(secrets["bidder_1"])))
 
 
 class TestBidderAuthentication(ApiTestCase):
@@ -531,16 +569,17 @@ class TestBidderAuthentication(ApiTestCase):
         super().setUp()
         self.create()
 
-    def test_each_bidder_gets_a_distinct_unguessable_token(self):
-        self.assertEqual(len(set(self.tokens.values())), 3)
-        for token in self.tokens.values():
+    def test_every_token_is_distinct_and_unguessable(self):
+        tokens = [self.organizer_token, *self.tokens.values()]
+        self.assertEqual(len(set(tokens)), 4)
+        for token in tokens:
             # 32 random bytes, URL-safe so the token can go into a join link.
             self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
 
     def test_tokens_never_appear_in_the_public_state(self):
         self.prove_all(self.commit_all())
-        state = self.client.get("/api/state").get_data(as_text=True)
-        for token in self.tokens.values():
+        state = self.client.get(self.url()).get_data(as_text=True)
+        for token in [self.organizer_token, *self.tokens.values()]:
             self.assertNotIn(token, state)
 
     def test_bidder_endpoints_require_a_valid_join_token(self):
@@ -551,12 +590,13 @@ class TestBidderAuthentication(ApiTestCase):
             "valid token, other scheme": {"Authorization": f"Token {alices}"},
             "unknown token": bearer("x" * 43),
             "truncated token": bearer(alices[:-1]),
+            "the organizer token": bearer(self.organizer_token),
         }
-        for path in BIDDER_ENDPOINTS:
+        for step in STEPS:
             for label, header in headers.items():
-                with self.subTest(path=path, header=label):
+                with self.subTest(step=step, header=label):
                     # The empty body would be a 400; the 401 comes first.
-                    resp = self.client.post(path, json={}, headers=header)
+                    resp = self.client.post(self.url(f"/{step}"), json={}, headers=header)
                     self.assert_error(resp, 401)
                     self.assertEqual(resp.headers["WWW-Authenticate"], "Bearer")
 
@@ -565,53 +605,69 @@ class TestBidderAuthentication(ApiTestCase):
         # for Bob, whose token it is, and Alice's slot stays free.
         commitment_hex = encode_point(commit(1800).point)
         resp = self.post_as(
-            "bidder_1", "/api/commit", bidder_id="bidder_0", commitment_hex=commitment_hex
+            "bidder_1", "commit", bidder_id="bidder_0", commitment_hex=commitment_hex
         )
         self.assert_ok(resp)
         bidders = self.state()["bidders"]
         self.assertIsNone(bidders[0]["commitment_hex"])
         self.assertEqual(bidders[1]["commitment_hex"], commitment_hex)
 
-    def test_tokens_of_a_replaced_auction_are_rejected(self):
-        # Bidder ids repeat across auctions (bidder_0, ...); tokens do not.
-        old_tokens = self.tokens
+
+class TestDelete(ApiTestCase):
+    def setUp(self):
+        super().setUp()
         self.create()
-        body = {"commitment_hex": encode_point(commit(1200).point)}
-        resp = self.client.post("/api/commit", json=body, headers=bearer(old_tokens["bidder_0"]))
-        self.assert_error(resp, 401)
+
+    def test_the_organizer_deletes_the_auction(self):
+        # Sent the way the frontend sends it: JSON content type, no body.
+        resp = self.client.delete(
+            self.url(), headers=bearer(self.organizer_token), content_type="application/json"
+        )
+        self.assert_ok(resp)
+        self.assert_error(self.client.get(self.url()), 404)
+
+    def test_nobody_else_may_delete(self):
+        headers = {
+            "no header": {},
+            "a bidder's join token": bearer(self.tokens["bidder_0"]),
+            "unknown token": bearer("x" * 43),
+        }
+        for label, header in headers.items():
+            with self.subTest(label):
+                resp = self.client.delete(self.url(), headers=header)
+                self.assert_error(resp, 401)
+                self.assertEqual(resp.headers["WWW-Authenticate"], "Bearer")
+        self.assert_ok(self.client.get(self.url()))
 
 
 class TestRequestFormat(ApiTestCase):
     def test_null_body_gets_a_clear_error(self):
-        resp = self.client.post("/api/create", data="null", content_type="application/json")
+        resp = self.client.post("/api/auctions", data="null", content_type="application/json")
         self.assertNotIn("NoneType", self.assert_error(resp)["error"])
 
     def test_malformed_json_gets_a_json_error(self):
-        resp = self.client.post("/api/create", data="{not json", content_type="application/json")
+        resp = self.client.post("/api/auctions", data="{not json", content_type="application/json")
         self.assert_error(resp)
 
     def test_body_must_be_a_json_object(self):
-        self.assert_error(self.client.post("/api/create", json=["Alice", "Bob"]))
+        self.assert_error(self.client.post("/api/auctions", json=["Alice", "Bob"]))
 
     # Browsers send text/plain POSTs to any origin without a CORS preflight, so
     # accepting them lets any website drive this API from a visitor's browser.
-    def test_commit_rejects_non_json_content_type(self):
-        self.create()
-        body = f'{{"commitment_hex": "{encode_point(commit(1200).point)}"}}'
-        resp = self.client.post("/api/commit", data=body, content_type="text/plain")
+    def test_create_and_commit_reject_non_json_content_type(self):
+        create = '{"item_name": "x", "min_bid": 1, "max_bid": 2, "bidders": ["A", "B"]}'
+        resp = self.client.post("/api/auctions", data=create, content_type="text/plain")
         self.assert_error(resp, 415)
-
-    def test_reset_rejects_non_json_content_type(self):
         self.create()
-        resp = self.client.post("/api/reset", data="", content_type="text/plain")
+        commitment = f'{{"commitment_hex": "{encode_point(commit(1200).point)}"}}'
+        resp = self.client.post(self.url("/commit"), data=commitment, content_type="text/plain")
         self.assert_error(resp, 415)
-        self.assert_ok(self.client.get("/api/state"))
 
     def test_unknown_route_gets_a_json_404(self):
         self.assert_error(self.client.get("/api/nope"), 404)
 
     def test_wrong_method_gets_a_json_405_with_allow_header(self):
-        resp = self.client.get("/api/create")
+        resp = self.client.get("/api/auctions")
         self.assert_error(resp, 405)
         self.assertIn("POST", resp.headers["Allow"])
 
@@ -620,24 +676,16 @@ class TestRequestFormat(ApiTestCase):
         self.client = create_app().test_client()
         self.create()
         with mock.patch.object(Auction, "get_public_state", side_effect=RuntimeError("secret")):
-            resp = self.client.get("/api/state")
+            resp = self.client.get(self.url())
         self.assertNotIn("secret", self.assert_error(resp, 500)["error"])
 
 
 class TestAppFactory(ApiTestCase):
-    def test_each_app_has_its_own_auction(self):
-        self.assert_ok(self.create())
+    def test_each_app_has_its_own_auctions(self):
+        self.assert_created(self.create())
         other = create_app({"TESTING": True}).test_client()
-        self.assert_error(other.get("/api/state"), 404)
-        self.assert_ok(self.client.get("/api/state"))
-
-
-class TestReset(ApiTestCase):
-    def test_reset_discards_the_auction(self):
-        self.create()
-        # Sent the way the frontend sends it: JSON content type, no body.
-        self.assert_ok(self.client.post("/api/reset", content_type="application/json"))
-        self.assert_error(self.client.get("/api/state"), 404)
+        self.assert_error(other.get(self.url()), 404)
+        self.assert_ok(self.client.get(self.url()))
 
 
 if __name__ == "__main__":

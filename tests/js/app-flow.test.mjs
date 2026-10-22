@@ -18,11 +18,13 @@ const COMMITMENT = "02" + "aa".repeat(32);
 const BLINDING = "bb".repeat(32);
 const FAKE_PROOF = { low: { bit_commitments: ["02" + "cc".repeat(32)], bit_proofs: [] }, high: {} };
 const TOKENS = { bidder_0: "alices-join-token", bidder_1: "bobs-join-token" };
+const ORGANIZER_TOKEN = "organizer-token";
 
-// What /api/create returns: the only response that carries join tokens.
+// What creating an auction returns: the only response that carries tokens.
 const CREATED = {
   success: true,
   auction_id: "ab".repeat(16),
+  organizer_token: ORGANIZER_TOKEN,
   item_name: "x",
   min_bid: 100,
   max_bid: 5000,
@@ -31,6 +33,7 @@ const CREATED = {
     { bidder_id: "bidder_1", name: "Bob", join_token: TOKENS.bidder_1 },
   ],
 };
+const AUCTION = `/api/auctions/${CREATED.auction_id}`;
 
 function fakeElement(value = "") {
   return {
@@ -70,14 +73,16 @@ function loadApp() {
     bidders: CREATED.bidders.map(({ bidder_id, name }) => ({ bidder_id, name, commitment_hex: null })),
   };
   const responses = {
-    "/api/state": state,
-    "/api/commit": { success: true, phase: "open", message: "ok" },
-    "/api/prove": { success: true, proof_valid: true, phase: "committed", message: "ok" },
-    "/api/reveal": { success: true, verified: true, phase: "proved", message: "ok", winner: null },
+    [`GET ${AUCTION}`]: state,
+    [`POST ${AUCTION}/commit`]: { success: true, phase: "open", message: "ok" },
+    [`POST ${AUCTION}/prove`]: { success: true, proof_valid: true, phase: "committed", message: "ok" },
+    [`POST ${AUCTION}/reveal`]: { success: true, verified: true, phase: "proved", message: "ok", winner: null },
+    [`DELETE ${AUCTION}`]: { success: true, message: "Auction deleted." },
   };
   const context = vm.createContext({
     console,
     alert: (message) => alerts.push(message),
+    confirm: () => true,
     // Recorded, never run: the tests decide what time it is.
     setTimeout: (callback, delay) => timers.push({ callback, delay }),
     clearTimeout() {},
@@ -91,11 +96,12 @@ function loadApp() {
     },
     fetch: async (path, opts) => {
       requests.push({
+        method: opts.method,
         path,
         authorization: opts.headers.Authorization,
         body: opts.body === undefined ? null : JSON.parse(opts.body),
       });
-      return { json: async () => responses[path] };
+      return { json: async () => responses[`${opts.method} ${path}`] };
     },
     window: {
       auctionCrypto: {
@@ -126,11 +132,11 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   assert.deepEqual(alerts, []);
 
   // Commit: only the commitment, computed locally from the typed bid.
-  assert.deepEqual(sentTo(requests, "/api/commit"), [{ commitment_hex: COMMITMENT }]);
+  assert.deepEqual(sentTo(requests, `${AUCTION}/commit`), [{ commitment_hex: COMMITMENT }]);
   assert.deepEqual(cryptoCalls[0], { commitBid: 1500n });
 
   // Prove: only the proof, computed locally for this auction and bidder.
-  assert.deepEqual(sentTo(requests, "/api/prove"), [{ proof: FAKE_PROOF }]);
+  assert.deepEqual(sentTo(requests, `${AUCTION}/prove`), [{ proof: FAKE_PROOF }]);
   // Spread: the object comes from the VM's realm, whose Object prototype differs.
   assert.deepEqual({ ...cryptoCalls[1].proveBid }, {
     bid: 1500n,
@@ -143,7 +149,7 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   });
 
   // Nothing before the reveal mentions the bid or the blinding factor.
-  const beforeReveal = requests.slice(0, requests.findIndex((r) => r.path === "/api/reveal"));
+  const beforeReveal = requests.slice(0, requests.findIndex((r) => r.path === `${AUCTION}/reveal`));
   for (const { path, body } of beforeReveal) {
     const sent = JSON.stringify(body ?? {});
     assert.ok(!sent.includes(BLINDING), `${path} leaked the blinding factor`);
@@ -151,7 +157,7 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   }
 
   // Reveal: the opening, for the first time.
-  assert.deepEqual(sentTo(requests, "/api/reveal"), [{ bid: 1500, randomness_hex: BLINDING }]);
+  assert.deepEqual(sentTo(requests, `${AUCTION}/reveal`), [{ bid: 1500, randomness_hex: BLINDING }]);
 });
 
 test("the page refreshes when the current phase's deadline passes, on the server's clock", async () => {
@@ -183,16 +189,25 @@ test("each bidder's requests carry that bidder's join token, and no others do", 
 
   // The token, not the body, says who is acting; reads need none.
   assert.deepEqual(
-    requests.map(({ path, authorization }) => [path, authorization]),
+    requests.map(({ method, path, authorization }) => [method, path, authorization]),
     [
-      ["/api/commit", `Bearer ${TOKENS.bidder_0}`],
-      ["/api/state", undefined],
-      ["/api/commit", `Bearer ${TOKENS.bidder_1}`],
-      ["/api/state", undefined],
-      ["/api/prove", `Bearer ${TOKENS.bidder_1}`],
-      ["/api/state", undefined],
-      ["/api/reveal", `Bearer ${TOKENS.bidder_1}`],
-      ["/api/state", undefined],
+      ["POST", `${AUCTION}/commit`, `Bearer ${TOKENS.bidder_0}`],
+      ["GET", AUCTION, undefined],
+      ["POST", `${AUCTION}/commit`, `Bearer ${TOKENS.bidder_1}`],
+      ["GET", AUCTION, undefined],
+      ["POST", `${AUCTION}/prove`, `Bearer ${TOKENS.bidder_1}`],
+      ["GET", AUCTION, undefined],
+      ["POST", `${AUCTION}/reveal`, `Bearer ${TOKENS.bidder_1}`],
+      ["GET", AUCTION, undefined],
     ],
+  );
+});
+
+test("reset deletes the auction on the server, as its organizer", async () => {
+  const { app, requests } = loadApp();
+  await app.resetAuction();
+  assert.deepEqual(
+    requests.map(({ method, path, authorization }) => [method, path, authorization]),
+    [["DELETE", AUCTION, `Bearer ${ORGANIZER_TOKEN}`]],
   );
 });

@@ -17,8 +17,8 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > **Work in progress.** This started as a prototype and is being hardened step
 > by step. The cryptographic guarantees below now hold under the
 > honest-but-curious model, but the application around them is not
-> production-ready yet: anyone can reset the auction, and nothing is stored
-> on disk, among others. See [Limitations](#limitations).
+> production-ready yet: nothing is stored on disk, and there are no accounts
+> or rate limits, among others. See [Limitations](#limitations).
 
 ---
 
@@ -62,12 +62,14 @@ independently, such as a pinned, reviewed release or a native client.
 Bidders are also honest-but-curious among themselves — they see each other's
 commitments but not the underlying bid values until phase 3.
 
-**Bidder identity.** Each bidder acts through a secret join token, issued when
-the auction is created and sent as `Authorization: Bearer <token>`. Nobody can
+**Identities.** Each bidder acts through a secret join token, issued when the
+auction is created and sent as `Authorization: Bearer <token>`. Nobody can
 commit, prove or reveal for another bidder, and a copy of another bidder's
-commitment is rejected. The server stores only SHA-256 digests of the tokens.
-Whoever creates the auction receives every token to hand out, so tokens
-protect bidders from each other and from outsiders, not from the organizer.
+commitment is rejected. Whoever creates the auction is its organizer and gets
+an organizer token, the only one that can delete the auction. The server
+stores only SHA-256 digests of the tokens. The organizer receives every join
+token to hand out, so tokens protect bidders from each other and from
+outsiders, not from the organizer.
 
 ---
 
@@ -75,8 +77,9 @@ protect bidders from each other and from outsiders, not from the organizer.
 
 ```
 SETUP
-  The organizer creates the auction; each bidder receives a secret join
-  token, which authenticates every request they make below. The commit,
+  The organizer creates the auction (any number can run at once, each under
+  /api/auctions/<id>); each bidder receives a secret join token, which
+  authenticates every request they make below. The commit,
   prove and reveal windows (10 minutes each by default) follow one another,
   so all three deadlines are fixed now
 
@@ -177,7 +180,7 @@ crypto-auction/
 │       ├── range_proof.py    # ZK range proof by bit decomposition
 │       ├── transcript.py     # Unambiguous encoding for Fiat-Shamir transcripts
 │       ├── auction.py        # State machine + auction logic
-│       ├── service.py        # Runs one auction: authenticates bidders, verifies what they send
+│       ├── service.py        # Runs the auctions: authenticates callers, verifies what they send
 │       └── web/              # Flask app: create_app(), python -m crypto_auction.web
 │           ├── api.py        # /api blueprint: routes and request validation
 │           ├── templates/
@@ -269,16 +272,15 @@ trades size for simplicity.
   server only verifies public data.
 - **Secrets live in page memory**: reloading the page loses a bidder's blinding
   factor, and with it the ability to reveal.
-- **The organizer is not authenticated**: anyone can replace the auction with a
-  new one or reset it. (Bidders are authenticated, see
-  [Security Model](#security-model).)
+- **Anyone can create auctions**: there are no accounts or rate limits. The
+  server holds at most 1000 auctions at once and refuses more (503).
 - **One page plays every bidder**: the page that creates the auction receives
   every join token; there is no per-bidder view yet.
 - **No deposits**: a bidder who misses a deadline only loses the chance to
   win. A real deployment would take a deposit that is forfeited along with
   it, so that dropping out has a cost.
 - **Single-server model**: Production would use MPC for the auctioneer role.
-- **In-memory state**: No database; a server restart resets the auction.
+- **In-memory state**: No database; a server restart loses every auction.
 
 Known bugs are tracked as `known_bug` tests (see the development setup above);
 `pytest -rx` lists them with their reasons.

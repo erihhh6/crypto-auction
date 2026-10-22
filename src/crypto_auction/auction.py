@@ -20,7 +20,8 @@ further part and cannot win, and the auction carries on without them. A
 bidder who stays silent therefore cannot stall the auction.
 
 Bidders prove who they are with a secret join token, issued when the auction
-is created (issue_join_tokens, authenticate).
+is created (issue_join_tokens, authenticate); the organizer, who created it,
+with an organizer token (issue_organizer_token, is_organizer).
 
 Security model: honest-but-curious auctioneer.
 The auctioneer sees only commitments and ZK proofs in phases 1-2 (bidders
@@ -199,6 +200,7 @@ class Auction:
         # Bound into every range proof's context, so a proof made for one
         # auction cannot be replayed in another.
         self.auction_id = secrets.token_hex(16)
+        self._organizer_digest: bytes | None = None
 
         self._clock = clock
         commit_ends = clock() + config.commit_seconds
@@ -243,6 +245,21 @@ class Auction:
             if bidder.token_digest is not None and hmac.compare_digest(bidder.token_digest, digest):
                 return bidder_id
         return None
+
+    def issue_organizer_token(self) -> str:
+        """
+        Give the organizer a new secret token, kept like the join tokens: it is
+        returned once and only its digest is stored.
+        """
+        token = secrets.token_urlsafe(32)
+        self._organizer_digest = _token_digest(token)
+        return token
+
+    def is_organizer(self, token: str) -> bool:
+        """Whether token is this auction's organizer token (never a bidder's)."""
+        return self._organizer_digest is not None and hmac.compare_digest(
+            self._organizer_digest, _token_digest(token)
+        )
 
     # ------------------------------------------------------------------
     # Phases and deadlines

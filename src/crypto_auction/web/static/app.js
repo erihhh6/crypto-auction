@@ -62,15 +62,23 @@ function fmtBid(amount) {
   return "$" + Number(amount).toLocaleString();
 }
 
+/** The URL of this page's auction, or of one of its actions ("/commit", ...). */
+function auctionUrl(suffix = "") {
+  return `/api/auctions/${encodeURIComponent(localState.auction.auction_id)}${suffix}`;
+}
+
 /** Current time as HH:MM:SS */
 function timestamp() {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-/** Safe fetch with JSON body, returns parsed JSON or throws. A join token authenticates a bidder. */
-async function apiFetch(path, method = "GET", body = null, joinToken = null) {
+/**
+ * Safe fetch with JSON body, returns parsed JSON or throws. A token (a
+ * bidder's join token, or the organizer token) authenticates the request.
+ */
+async function apiFetch(path, method = "GET", body = null, token = null) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
-  if (joinToken !== null) opts.headers.Authorization = `Bearer ${joinToken}`;
+  if (token !== null) opts.headers.Authorization = `Bearer ${token}`;
   if (body !== null) opts.body = JSON.stringify(body);
   const res = await fetch(path, opts);
   const json = await res.json();
@@ -147,7 +155,7 @@ async function createAuction() {
     btn.disabled = true;
     btn.textContent = "Creating…";
 
-    const data = await apiFetch("/api/create", "POST", request);
+    const data = await apiFetch("/api/auctions", "POST", request);
 
     rememberAuction(data);
 
@@ -176,7 +184,10 @@ function showSetupError(msg) {
   el.style.display = "block";
 }
 
-/** Start a session from the /api/create response, which carries every bidder's join token. */
+/**
+ * Start a session from the create response, which carries every bidder's join
+ * token and the organizer token (kept in localState.auction).
+ */
 function rememberAuction(data) {
   localState.auction = data;
   localState.joinTokens = Object.fromEntries(data.bidders.map(b => [b.bidder_id, b.join_token]));
@@ -189,15 +200,15 @@ function rememberAuction(data) {
 // zero-knowledge proof, both computed here by auction-crypto.js.
 // ---------------------------------------------------------------------------
 
-/** POST as a bidder. The server identifies the bidder by their join token alone. */
-function postAsBidder(bidderId, path, body) {
-  return apiFetch(path, "POST", body, localState.joinTokens[bidderId]);
+/** POST a step ("commit", ...) as a bidder, who is identified by their join token alone. */
+function postAsBidder(bidderId, step, body) {
+  return apiFetch(auctionUrl(`/${step}`), "POST", body, localState.joinTokens[bidderId]);
 }
 
 /** Commit to a bid locally and send only the commitment. */
 async function submitCommitment(bidderId, bid) {
   const { commitmentHex, blindingHex } = window.auctionCrypto.commitBid(BigInt(bid));
-  await postAsBidder(bidderId, "/api/commit", { commitment_hex: commitmentHex });
+  await postAsBidder(bidderId, "commit", { commitment_hex: commitmentHex });
   // Kept only in memory, and sent at the reveal.
   localState.bidderSecrets[bidderId] = {
     bid,
@@ -220,14 +231,14 @@ async function submitProof(bidderId) {
     auctionId:     auction_id,
     bidderId,
   });
-  const data = await postAsBidder(bidderId, "/api/prove", { proof });
+  const data = await postAsBidder(bidderId, "prove", { proof });
   return { proof, data };
 }
 
 /** Reveal the opening: the first time the bid itself leaves the browser. */
 function submitReveal(bidderId) {
   const secret = localState.bidderSecrets[bidderId];
-  return postAsBidder(bidderId, "/api/reveal", {
+  return postAsBidder(bidderId, "reveal", {
     bid:            secret.bid,
     randomness_hex: secret.randomness_hex,
   });
@@ -336,7 +347,7 @@ async function revealBid(bidderId) {
 
 async function refreshState() {
   try {
-    const data = await apiFetch("/api/state");
+    const data = await apiFetch(auctionUrl());
     localState.serverState = data;
     renderAll(data);
     scheduleDeadlineRefresh(data);
@@ -683,7 +694,8 @@ function closeWinnerModal() {
 async function resetAuction() {
   if (!confirm("Reset the auction? All state will be lost.")) return;
   try {
-    await apiFetch("/api/reset", "POST");
+    // As the organizer: the auction is deleted on the server too.
+    await apiFetch(auctionUrl(), "DELETE", null, localState.auction.organizer_token);
   } catch (_) { /* ignore */ }
 
   // Clear client state
@@ -769,7 +781,7 @@ async function startDemo() {
 
   let auctionData;
   try {
-    auctionData = await apiFetch("/api/create", "POST", request);
+    auctionData = await apiFetch("/api/auctions", "POST", request);
   } catch (err) {
     showSetupError(err.message);
     createBtn.disabled = false;
