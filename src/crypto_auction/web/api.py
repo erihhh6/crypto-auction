@@ -449,6 +449,7 @@ def submit_reveal(auction_id: str) -> ResponseReturnValue:
         "success":  bool,
         "verified": bool,
         "phase":    str,
+        "message":  str,
         "winner":   { "bidder_id", "name", "bid", "commitment_hex" } | null
       }
     """
