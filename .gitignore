@@ -19,6 +19,9 @@ env/
 .env
 .env.local
 
+# JavaScript tooling (package.json)
+node_modules/
+
 # Testing & coverage
 .coverage
 .coverage.*

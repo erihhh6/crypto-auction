@@ -794,12 +794,12 @@ function setChildren(node, children) {
   while (node.children.length > children.length) node.lastElementChild.remove();
 }
 
-/** A phase badge: its label on screen, and (filled in later) its state in words. */
+/** A phase badge: its label on screen, and (filled in later) its status in words. */
 function phaseBadge(label) {
   const badge = el("span", "phase-badge");
-  const state = el("span", "sr-only");
-  badge.append(el("span", "", label), state);
-  return { badge, state };
+  const status = el("span", "sr-only");
+  badge.append(el("span", "", label), status);
+  return { badge, status };
 }
 
 /** A bidder's card: its elements, created once, which updateBidderCard fills in. */
@@ -945,9 +945,9 @@ function updateBidderCard(view, b, state) {
 
   // Each badge says done, invalid or not yet: in colour, and in words for
   // screen readers.
-  const setBadge = ({ badge, state }, step, done, valid = true) => {
+  const setBadge = ({ badge, status }, step, done, valid = true) => {
     badge.className = `phase-badge ${done ? (valid ? `done ${step}` : "invalid") : ""}`;
-    state.textContent = done ? (valid ? ": done" : ": invalid") : ": not yet";
+    status.textContent = done ? (valid ? ": done" : ": invalid") : ": not yet";
   };
   setBadge(view.badges.commit, "commit", hasCommitted);
   setBadge(view.badges.prove, "prove", hasProved, b.proof_valid);
@@ -1248,8 +1248,7 @@ function randInt(lo, hi) {
 }
 
 function setDemoStatus(text) {
-  const el = document.getElementById("demo-status-text");
-  if (el) el.textContent = text;
+  document.getElementById("demo-status-text").textContent = text;
 }
 
 async function startDemo() {

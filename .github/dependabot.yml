@@ -1,0 +1,47 @@
+# Dependabot opens a pull request when a dependency has a new release; CI
+# then checks it like any other change. Every version here is pinned exactly
+# (or, for the runtime dependencies, to patch releases), so nothing moves
+# without such a pull request.
+#
+# cooldown: a release is proposed only once it is a week old. A hijacked
+# package is usually caught and pulled within days; this keeps it out of here.
+version: 2
+updates:
+  # Runtime (pyproject.toml) and development tools (requirements-dev.txt).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # Lint, type check and test tools: one pull request for all of them.
+      python-dev-tools:
+        patterns: ["mypy", "pytest", "pytest-cov", "ruff"]
+
+  # package.json: ESLint, and the version of noble-secp256k1 the page vendors.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # eslint and @eslint/js are released together and must match.
+      js-dev-tools:
+        dependency-type: development
+        # A pull request of its own: its CI fails until the vendored copy
+        # is reviewed and updated (see static/vendor/README.md).
+        exclude-patterns: ["@noble/secp256k1"]
+
+  # The actions in .github/workflows, pinned to commit SHAs: Dependabot moves
+  # the SHA and the version comment beside it together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]

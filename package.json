@@ -1,0 +1,21 @@
+{
+  "name": "crypto-auction",
+  "private": true,
+  "description": "Tooling for the page's JavaScript. The page itself has no build step: these packages only check the code.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings=0 .",
+    "test": "node --test \"tests/js/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@eslint/compat": "2.1.1",
+    "@eslint/js": "10.0.1",
+    "@noble/secp256k1": "3.2.0",
+    "eslint": "10.13.0",
+    "globals": "17.13.0"
+  }
+}

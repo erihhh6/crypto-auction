@@ -168,12 +168,20 @@ pytest --cov                # test suite with branch coverage (fails below the f
 ruff check .                # lint
 ruff format --check .       # formatting
 python -m mypy              # strict type check of src/ and examples/
-node --test "tests/js/*.test.mjs"   # frontend tests: rendering, request flow, browser crypto
+
+npm ci                      # JavaScript tooling, exactly as package-lock.json records it
+npm run lint                # ESLint over the page's scripts and the JS tests
+npm test                    # frontend tests: rendering, request flow, browser crypto
 ```
 
-The frontend tests need Node 22+ and no `npm install`. `pytest` also runs
-`tests/test_browser_interop.py`, which drives the browser's crypto module with
-Node; without Node those tests are skipped, unless `REQUIRE_NODE=1` (as in CI).
+The JavaScript side needs Node 22.13+. Its packages only check the code: the
+page itself has no build step, and `.npmrc` keeps them from running install
+scripts. `pytest` also runs `tests/test_browser_interop.py`, which drives the
+browser's crypto module with Node; without Node those tests are skipped, unless
+`REQUIRE_NODE=1` (as in CI).
+
+Dependabot (`.github/dependabot.yml`) proposes updates of the Python packages,
+the npm packages and the GitHub Actions, each once its release is a week old.
 
 ### Accessibility
 
@@ -204,6 +212,7 @@ removes its marker, and the suite fails if a marker outlives its bug.
 ```
 crypto-auction/
 ├── .github/
+│   ├── dependabot.yml        # Weekly dependency update pull requests
 │   └── workflows/
 │       └── ci.yml            # GitHub Actions CI
 ├── docs/
@@ -231,9 +240,10 @@ crypto-auction/
 ├── tests/
 │   ├── js/
 │   │   ├── render.test.mjs   # Rendering: cards updated in place, escaping, phase indicator
-│   │   ├── fake-dom.mjs      # Minimal DOM to run app.js under Node, no npm install
+│   │   ├── fake-dom.mjs      # Minimal DOM to run app.js under Node
 │   │   ├── app-flow.test.mjs # What each request sends, and as whom; how failures are shown
 │   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
+│   │   ├── vendor.test.mjs   # The vendored noble-secp256k1 is the npm package in package.json
 │   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests
 │   ├── support.py            # Shared helpers (known_bug marker, fake clock, temporary database)
 │   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
@@ -248,7 +258,12 @@ crypto-auction/
 │   └── test_app.py           # Server entry point (debug mode)
 ├── pyproject.toml            # Package metadata and tool configuration
 ├── requirements.txt          # Installs the package and its dependencies
-└── requirements-dev.txt      # Test, lint and type-check tooling
+├── requirements-dev.txt      # Test, lint and type-check tooling
+├── package.json              # JavaScript tooling (ESLint) and the vendored library's version
+├── package-lock.json         # Exact versions and hashes of the npm packages
+├── eslint.config.js          # ESLint rules, per script kind (page script, module, Node)
+├── .npmrc                    # No install scripts; exact versions
+└── .gitattributes            # Vendored code checked out byte for byte (no CRLF conversion)
 ```
 
 ---

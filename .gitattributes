@@ -1,0 +1,4 @@
+# Vendored third-party code stays byte for byte as published: no line-ending
+# conversion on checkout (Git for Windows converts by default), so its SHA-256
+# matches the one in its README and tests/js/vendor.test.mjs passes everywhere.
+src/crypto_auction/web/static/vendor/** -text
