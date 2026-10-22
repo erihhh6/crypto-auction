@@ -13,9 +13,8 @@ State transitions:
                           is determined from the verified reveals
 
 Security model: honest-but-curious auctioneer.
-The auctioneer should see only commitments and ZK proofs in phases 1-2, and
-learn actual bid values only in phase 3. Not met yet: the server currently
-receives bids in plaintext (see README).
+The auctioneer sees only commitments and ZK proofs in phases 1-2 (bidders
+compute both themselves), and learns actual bid values only in phase 3.
 """
 
 import secrets
@@ -29,6 +28,16 @@ from crypto_auction.range_proof import RangeProof, verify_range
 from crypto_auction.transcript import encode_parts
 
 _PROOF_DOMAIN = b"crypto-auction/bid-range-proof/v1"
+
+
+def bid_proof_context(auction_id: str, bidder_id: str) -> bytes:
+    """
+    What a bidder's range proof is bound to: one auction and one bidder.
+
+    Bidders compute their proofs themselves (in the browser), so this exact
+    encoding is part of the protocol; static/auction-crypto.js mirrors it.
+    """
+    return encode_parts(_PROOF_DOMAIN, auction_id.encode(), bidder_id.encode())
 
 
 class AuctionState(Enum):
@@ -124,7 +133,7 @@ class Auction:
 
     def proof_context(self, bidder_id: str) -> bytes:
         """What a bidder's range proof is bound to: this auction and this bidder."""
-        return encode_parts(_PROOF_DOMAIN, self.auction_id.encode(), bidder_id.encode())
+        return bid_proof_context(self.auction_id, bidder_id)
 
     # ------------------------------------------------------------------
     # Phase 1 — Commit

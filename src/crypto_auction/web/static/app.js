@@ -1,15 +1,14 @@
 "use strict";
 
 // ---------------------------------------------------------------------------
-// Local state — nothing here is ever sent to the server unnecessarily.
-// bidderSecrets stores (bid, randomness_hex) received once from /api/commit;
-// randomness_hex is the commitment's blinding factor r. The server discards it
-// after returning it; only the client holds it.
+// Local state. bidderSecrets holds each bidder's opening, created in this
+// browser at commit time: the bid and randomness_hex (the commitment's
+// blinding factor r). Both stay here until the reveal.
 // ---------------------------------------------------------------------------
 const localState = {
-  auction: null,           // config returned by /api/create
+  auction: null,           // config returned by /api/create (includes auction_id)
   serverState: null,       // latest public state from /api/state
-  bidderSecrets: {},       // { bidder_id: { bid: int, randomness_hex: str } }
+  bidderSecrets: {},       // { bidder_id: { bid: int, randomness_hex: str, commitment_hex: str } }
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +149,52 @@ function showSetupError(msg) {
 }
 
 // ---------------------------------------------------------------------------
+// Bidder-side protocol steps. The bid and its blinding factor stay in this
+// browser until the reveal: the server receives only the commitment and the
+// zero-knowledge proof, both computed here by auction-crypto.js.
+// ---------------------------------------------------------------------------
+
+/** Commit to a bid locally and send only the commitment. */
+async function submitCommitment(bidderId, bid) {
+  const { commitmentHex, blindingHex } = window.auctionCrypto.commitBid(BigInt(bid));
+  await apiFetch("/api/commit", "POST", { bidder_id: bidderId, commitment_hex: commitmentHex });
+  // Kept only in memory, and sent at the reveal.
+  localState.bidderSecrets[bidderId] = {
+    bid,
+    randomness_hex: blindingHex,
+    commitment_hex: commitmentHex,
+  };
+  return { commitmentHex, blindingHex };
+}
+
+/** Prove locally that the committed bid lies in the auction's range; send only the proof. */
+async function submitProof(bidderId) {
+  const secret = localState.bidderSecrets[bidderId];
+  const { auction_id, min_bid, max_bid } = localState.auction;
+  const proof = await window.auctionCrypto.proveBid({
+    bid:           BigInt(secret.bid),
+    blindingHex:   secret.randomness_hex,
+    commitmentHex: secret.commitment_hex,
+    minBid:        BigInt(min_bid),
+    maxBid:        BigInt(max_bid),
+    auctionId:     auction_id,
+    bidderId,
+  });
+  const data = await apiFetch("/api/prove", "POST", { bidder_id: bidderId, proof });
+  return { proof, data };
+}
+
+/** Reveal the opening: the first time the bid itself leaves the browser. */
+function submitReveal(bidderId) {
+  const secret = localState.bidderSecrets[bidderId];
+  return apiFetch("/api/reveal", "POST", {
+    bidder_id:      bidderId,
+    bid:            secret.bid,
+    randomness_hex: secret.randomness_hex,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Phase 1 — Commit
 // ---------------------------------------------------------------------------
 
@@ -169,21 +214,15 @@ async function commitBid(bidderId) {
   if (btn) { btn.disabled = true; btn.textContent = "Committing…"; }
 
   try {
-    const data = await apiFetch("/api/commit", "POST", { bidder_id: bidderId, bid });
-
-    // Store secrets locally — do NOT re-send to server unnecessarily
-    localState.bidderSecrets[bidderId] = {
-      bid,
-      randomness_hex: data.randomness_hex,
-    };
+    const { commitmentHex, blindingHex } = await submitCommitment(bidderId, bid);
 
     const bidderName = getBidderName(bidderId);
     addPublicLogEntry(`${bidderName} committed`, {
-      commitment: truncHex(data.commitment_hex),
+      commitment: truncHex(commitmentHex),
     });
     addPrivateLogEntry(bidderId, `${bidderName} — your secrets`, {
       bid:        fmtBid(bid),
-      "blinding r": truncHex(data.randomness_hex) + " (keep private)",
+      "blinding r": truncHex(blindingHex) + " (keep private)",
     });
 
     await refreshState();
@@ -205,16 +244,12 @@ async function proveBid(bidderId) {
   if (btn) { btn.disabled = true; btn.textContent = "Proving…"; }
 
   try {
-    const data = await apiFetch("/api/prove", "POST", {
-      bidder_id:     bidderId,
-      bid:           secret.bid,
-      randomness_hex: secret.randomness_hex,
-    });
+    const { proof, data } = await submitProof(bidderId);
 
     const bidderName = getBidderName(bidderId);
     addPublicLogEntry(
       `${bidderName} ZK proof ${data.proof_valid ? "✓ valid" : "✗ invalid"}`,
-      proofSummary(data.proof_public),
+      proofSummary(proof),
     );
 
     await refreshState();
@@ -236,11 +271,7 @@ async function revealBid(bidderId) {
   if (btn) { btn.disabled = true; btn.textContent = "Revealing…"; }
 
   try {
-    const data = await apiFetch("/api/reveal", "POST", {
-      bidder_id:     bidderId,
-      bid:           secret.bid,
-      randomness_hex: secret.randomness_hex,
-    });
+    const data = await submitReveal(bidderId);
 
     const bidderName = getBidderName(bidderId);
     if (data.verified) {
@@ -424,7 +455,7 @@ function renderActionsPanel(state) {
   // Phase description
   const phaseDescriptions = {
     open:      { title: "Phase 1 — Commit", color: "var(--color-commit)",
-      desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1. C hides the bid, and the bidder cannot change it afterwards." },
+      desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1, computed in this browser. The auctioneer receives only C, which hides the bid; the bidder cannot change it afterwards." },
     committed: { title: "Phase 2 — ZK Prove", color: "var(--color-prove)",
       desc: "Each bidder proves in zero knowledge that the committed bid lies in <strong>[min, max]</strong>: a range proof made of one OR-proof per bit, checked without revealing the bid." },
     proved:    { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
@@ -705,13 +736,12 @@ async function startDemo() {
       await sleep(randInt(800, 1600));
       if (demo.aborted) break;
 
-      const data = await apiFetch("/api/commit", "POST", { bidder_id: bidderId, bid });
-      localState.bidderSecrets[bidderId] = { bid, randomness_hex: data.randomness_hex };
+      const { commitmentHex, blindingHex } = await submitCommitment(bidderId, bid);
 
-      addPublicLogEntry(`${name} committed`, { commitment: truncHex(data.commitment_hex) });
+      addPublicLogEntry(`${name} committed`, { commitment: truncHex(commitmentHex) });
       addPrivateLogEntry(bidderId, `${name} — secret (demo)`, {
         bid:        fmtBid(bid),
-        "blinding r": truncHex(data.randomness_hex),
+        "blinding r": truncHex(blindingHex),
       });
       await refreshState();
     }
@@ -721,19 +751,14 @@ async function startDemo() {
     for (const bidderId of proveOrder) {
       if (demo.aborted) break;
       const name   = getBidderNameFromData(auctionData, bidderId);
-      const secret = localState.bidderSecrets[bidderId];
       setDemoStatus(`Phase 2 — ${name} is generating ZK proof…`);
       await sleep(randInt(900, 1800));
       if (demo.aborted) break;
 
-      const data = await apiFetch("/api/prove", "POST", {
-        bidder_id:      bidderId,
-        bid:            secret.bid,
-        randomness_hex: secret.randomness_hex,
-      });
+      const { proof, data } = await submitProof(bidderId);
       addPublicLogEntry(
         `${name} ZK proof ${data.proof_valid ? "valid" : "INVALID"}`,
-        proofSummary(data.proof_public),
+        proofSummary(proof),
       );
       await refreshState();
     }
@@ -748,11 +773,7 @@ async function startDemo() {
       await sleep(randInt(900, 1700));
       if (demo.aborted) break;
 
-      const data = await apiFetch("/api/reveal", "POST", {
-        bidder_id:      bidderId,
-        bid:            secret.bid,
-        randomness_hex: secret.randomness_hex,
-      });
+      const data = await submitReveal(bidderId);
 
       if (data.verified) {
         addPublicLogEntry(`${name} revealed bid`, { bid: fmtBid(secret.bid) });

@@ -76,7 +76,11 @@ def _hash_to_curve(tag: bytes) -> Point:
 
 # Part of the protocol: changing the tag changes H, which silently invalidates
 # every existing commitment and must be mirrored by any other implementation.
-H: Point = _hash_to_curve(b"crypto-auction/pedersen/H/v1")
+_h = _hash_to_curve(b"crypto-auction/pedersen/H/v1")
+# H is multiplied in every commitment and bit proof, so let ecdsa precompute
+# its multiples as it does for G: proving became about 2x and verification
+# about 1.5x faster (same-process A/B benchmark).
+H: Point = PointJacobi(_CURVE, _h.x(), _h.y(), 1, N, generator=True)
 
 
 @dataclass(frozen=True)

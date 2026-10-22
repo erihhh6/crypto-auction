@@ -1,21 +1,15 @@
 """
 REST API for the sealed-bid cryptographic auction demo (blueprint at /api).
 
-Security note (for CV / README):
-  In a production system, randomness_hex (the commitment's blinding factor r)
-  would NEVER pass through the server. The bidder would generate it locally in
-  their browser, compute the commitment and the range proof client-side, and
-  only send those. In this demo the server generates it for simplicity and
-  returns it ONCE to the frontend, which then stores it in JS memory. It is
-  never re-sent to the server except at the prove and reveal steps (where it is
-  needed to compute the ZK proof and verify the commitment opening
-  respectively). The server discards it after each use.
+Bidders compute their commitment and range proof themselves (in the browser,
+static/auction-crypto.js) and send only those. The bid and its blinding factor
+reach the server for the first time at the reveal.
 
 Endpoints:
   POST /api/create   — create a new auction session
   GET  /api/state    — fetch current public state
-  POST /api/commit   — submit a bid commitment (server generates commitment)
-  POST /api/prove    — generate and submit ZK range proof
+  POST /api/commit   — submit a bid commitment (computed by the bidder)
+  POST /api/prove    — submit a ZK range proof for the commitment
   POST /api/reveal   — reveal bid + blinding factor, verify commitment
   POST /api/reset    — reset the auction session entirely
 
@@ -37,7 +31,8 @@ from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
 
 from crypto_auction.auction import AuctionConfig
-from crypto_auction.pedersen import decode_scalar, encode_point, encode_scalar
+from crypto_auction.pedersen import decode_scalar
+from crypto_auction.range_proof import RangeProof
 from crypto_auction.service import AuctionRuleError, AuctionService, NoAuctionError
 
 # Largest integer the API accepts. JSON numbers above 2**53 - 1 are not exact
@@ -173,6 +168,21 @@ def _blinding_field(data: dict[str, Any]) -> int:
         )
 
 
+def _proof_field(data: dict[str, Any]) -> dict[str, Any]:
+    """A range proof in RangeProof.to_dict() format, checked to be well-formed."""
+    value = _field(data, "proof")
+    # Like the blinding factor: a proof that does not even parse is a client
+    # bug to retry (400), while a well-formed proof that fails verification is
+    # recorded as invalid by the auction.
+    try:
+        if not isinstance(value, dict):
+            raise TypeError("not an object")
+        RangeProof.from_dict(value)
+    except (KeyError, TypeError, ValueError):
+        _bad_request("'proof' is not a well-formed range proof.")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
@@ -194,6 +204,7 @@ def create_auction() -> ResponseReturnValue:
     Response:
       {
         "success":    bool,
+        "auction_id": str,   -- part of every range proof's context
         "item_name":  str,
         "min_bid":    int,
         "max_bid":    int,
@@ -231,6 +242,7 @@ def create_auction() -> ResponseReturnValue:
     return jsonify(
         {
             "success": True,
+            "auction_id": auction.auction_id,
             "item_name": item_name,
             "min_bid": min_bid,
             "max_bid": max_bid,
@@ -260,40 +272,26 @@ def get_state() -> ResponseReturnValue:
 @bp.post("/commit")
 def submit_commit() -> ResponseReturnValue:
     """
-    Generate a commitment for a bidder's bid and register it.
+    Register a bidder's commitment, computed by the bidder.
 
     Body JSON:
-      { "bidder_id": str, "bid": int }
+      { "bidder_id": str, "commitment_hex": str }
 
-    The server computes the Pedersen commitment C = bid·G + r·H with a random
-    blinding factor r, stores C, and returns r (as randomness_hex) to the
-    client ONCE. The client must store it; the server does NOT retain it.
+    commitment_hex is the Pedersen commitment C = bid·G + r·H as a compressed
+    point; the bid and the blinding factor r stay with the bidder.
 
     Response:
-      {
-        "success":        bool,
-        "commitment_hex": str,   -- public; compressed point, 66 hex chars
-        "randomness_hex": str,   -- PRIVATE blinding factor r, 64 hex chars
-        "phase":          str
-      }
+      { "success": bool, "phase": str, "message": str }
     """
     service = _service()
     service.require_auction()  # 404 takes precedence over body validation
     data = _json_object()
     bidder_id = _str_field(data, "bidder_id")
-    bid = _int_field(data, "bid")
+    commitment_hex = _str_field(data, "commitment_hex")
 
-    c, result = service.commit(bidder_id, bid)
+    result = service.commit(bidder_id, commitment_hex)
 
-    return jsonify(
-        {
-            "success": True,
-            "commitment_hex": encode_point(c.point),
-            "randomness_hex": encode_scalar(c.blinding),  # returned once; not stored
-            "phase": result.phase.value,
-            "message": result.message,
-        }
-    )
+    return jsonify({"success": True, "phase": result.phase.value, "message": result.message})
 
 
 # ---------------------------------------------------------------------------
@@ -304,37 +302,30 @@ def submit_commit() -> ResponseReturnValue:
 @bp.post("/prove")
 def submit_prove() -> ResponseReturnValue:
     """
-    Generate and verify a ZK range proof for a bidder.
+    Verify and record a bidder's ZK range proof, computed by the bidder.
 
     Body JSON:
-      { "bidder_id": str, "bid": int, "randomness_hex": str }
+      { "bidder_id": str, "proof": { "low": {...}, "high": {...} } }
 
-    The server generates the range proof using the private (bid, blinding
-    factor) sent by the client, verifies it, and records the result.
-    After this call the server discards the private values.
+    The proof (RangeProof.to_dict() format) must show that the bidder's
+    commitment hides a bid in [min_bid, max_bid], bound to this auction and
+    bidder. A well-formed proof that fails verification is recorded as invalid.
 
     Response:
-      {
-        "success":      bool,
-        "proof_valid":  bool,
-        "proof_public": { "low": {...}, "high": {...} },  -- RangeProof.to_dict()
-        "phase":        str
-      }
+      { "success": bool, "proof_valid": bool, "phase": str, "message": str }
     """
     service = _service()
     service.require_auction()  # 404 takes precedence over body validation
     data = _json_object()
     bidder_id = _str_field(data, "bidder_id")
-    bid = _int_field(data, "bid")
-    blinding = _blinding_field(data)
+    proof = _proof_field(data)
 
-    proof, result = service.prove(bidder_id, bid, blinding)
+    result = service.prove(bidder_id, proof)
 
     return jsonify(
         {
             "success": True,
             "proof_valid": result.proof_valid,
-            "proof_public": proof.to_dict(),
             "phase": result.phase.value,
             "message": result.message,
         }

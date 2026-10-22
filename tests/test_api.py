@@ -3,13 +3,27 @@
 import unittest
 from unittest import mock
 
-from crypto_auction.auction import Auction
-from crypto_auction.pedersen import N, decode_point, decode_scalar, verify
+from crypto_auction.auction import Auction, bid_proof_context
+from crypto_auction.pedersen import (
+    N,
+    commit,
+    decode_point,
+    decode_scalar,
+    encode_point,
+    encode_scalar,
+    verify,
+)
+from crypto_auction.range_proof import prove_range
 from crypto_auction.web import create_app
 from crypto_auction.web.api import MAX_NAME_LENGTH
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
+
+
+def opening(secret):
+    """What a bidder sends at the reveal: the bid and the blinding factor."""
+    return {"bid": secret["bid"], "randomness_hex": secret["randomness_hex"]}
 
 
 class ApiTestCase(unittest.TestCase):
@@ -50,16 +64,45 @@ class ApiTestCase(unittest.TestCase):
         return body
 
     def commit_all(self, bids=BIDS):
-        """Commit every bid and return each bidder's opening (bid, randomness)."""
+        """
+        Commit every bid the way the browser does: compute C = bid·G + r·H
+        locally and send only C. Returns the openings the bidders keep.
+        """
         secrets = {}
         for bidder_id, bid in bids.items():
-            data = self.assert_ok(self.post("/api/commit", bidder_id=bidder_id, bid=bid))
-            secrets[bidder_id] = {"bid": bid, "randomness_hex": data["randomness_hex"]}
+            c = commit(bid)
+            commitment_hex = encode_point(c.point)
+            self.assert_ok(
+                self.post("/api/commit", bidder_id=bidder_id, commitment_hex=commitment_hex)
+            )
+            secrets[bidder_id] = {
+                "bid": bid,
+                "randomness_hex": encode_scalar(c.blinding),
+                "commitment_hex": commitment_hex,
+            }
         return secrets
+
+    def make_proof(self, bidder_id, secret, *, bounds=None, auction_id=None):
+        """The range proof the browser computes; for this auction unless told otherwise."""
+        state = self.state()
+        min_bid, max_bid = bounds or (state["min_bid"], state["max_bid"])
+        context = bid_proof_context(auction_id or state["auction_id"], bidder_id)
+        return prove_range(
+            decode_point(secret["commitment_hex"]),
+            secret["bid"],
+            decode_scalar(secret["randomness_hex"]),
+            min_bid,
+            max_bid,
+            context,
+        ).to_dict()
+
+    def prove(self, bidder_id, secret, **kwargs):
+        proof = self.make_proof(bidder_id, secret, **kwargs)
+        return self.post("/api/prove", bidder_id=bidder_id, proof=proof)
 
     def prove_all(self, secrets):
         for bidder_id, secret in secrets.items():
-            self.assert_ok(self.post("/api/prove", bidder_id=bidder_id, **secret))
+            self.assert_ok(self.prove(bidder_id, secret))
 
 
 class TestIndex(ApiTestCase):
@@ -191,42 +234,41 @@ class TestCommit(ApiTestCase):
         super().setUp()
         self.create()
 
-    def test_returns_opening_for_the_commitment(self):
-        data = self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=1200))
-        point = decode_point(data["commitment_hex"])  # a compressed curve point
-        self.assertTrue(verify(point, 1200, decode_scalar(data["randomness_hex"])))
-
-    def test_commitment_is_published_in_state(self):
-        data = self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=1200))
-        published = self.state()["bidders"][0]["commitment_hex"]
-        self.assertEqual(published, data["commitment_hex"])
-
-    def test_accepts_bids_on_the_bounds(self):
-        self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=100))
-        self.assert_ok(self.post("/api/commit", bidder_id="bidder_1", bid=5000))
-
-    def test_rejects_bids_outside_the_range(self):
-        # Separate bidders, so a wrongly accepted first bid cannot make the
-        # second case fail as a double commit instead.
-        for bidder_id, bid in (("bidder_0", 99), ("bidder_1", 5001)):
-            with self.subTest(bid=bid):
-                self.assert_error(self.post("/api/commit", bidder_id=bidder_id, bid=bid))
+    def test_server_receives_only_the_commitment(self):
+        c = commit(1200)
+        commitment_hex = encode_point(c.point)
+        data = self.assert_ok(
+            self.post("/api/commit", bidder_id="bidder_0", commitment_hex=commitment_hex)
+        )
+        self.assertEqual(set(data), {"success", "phase", "message"})  # no secrets either way
+        self.assertEqual(self.state()["bidders"][0]["commitment_hex"], commitment_hex)
 
     def test_rejects_unknown_bidder(self):
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_99", bid=1200))
+        commitment_hex = encode_point(commit(1200).point)
+        resp = self.post("/api/commit", bidder_id="bidder_99", commitment_hex=commitment_hex)
+        self.assert_error(resp)
 
     def test_rejects_double_commit(self):
-        self.assert_ok(self.post("/api/commit", bidder_id="bidder_0", bid=1200))
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_0", bid=1300))
+        self.commit_all({"bidder_0": 1200})
+        commitment_hex = encode_point(commit(1300).point)
+        resp = self.post("/api/commit", bidder_id="bidder_0", commitment_hex=commitment_hex)
+        self.assert_error(resp)
 
-    def test_rejects_malformed_payload(self):
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_0"))
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_0", bid="lots"))
-
-    def test_rejects_float_and_bool_bids(self):
-        self.create(min_bid=0)  # so that true (== 1) would be inside the range
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_0", bid=1500.9))
-        self.assert_error(self.post("/api/commit", bidder_id="bidder_1", bid=True))
+    def test_rejects_malformed_commitments(self):
+        cases = {
+            "missing": None,
+            "not a string": 12345,
+            "old SHA-256 digest": "ab" * 32,
+            "not hex": "02" + "zz" * 32,
+            "not on the curve": "02" + "05" * 32,
+            "non-canonical x >= p": "02" + "ff" * 32,
+            "uppercase": encode_point(commit(1200).point).upper(),
+        }
+        for label, value in cases.items():
+            with self.subTest(label):
+                body = {} if value is None else {"commitment_hex": value}
+                self.assert_error(self.post("/api/commit", bidder_id="bidder_0", **body))
+        self.assertIsNone(self.state()["bidders"][0]["commitment_hex"])
 
     def test_phase_advances_once_everyone_committed(self):
         self.commit_all({"bidder_0": 1200, "bidder_1": 1800})
@@ -240,72 +282,89 @@ class TestProve(ApiTestCase):
         super().setUp()
         self.create()
 
-    def test_valid_proof_is_accepted_and_published(self):
+    def test_valid_proof_is_accepted(self):
         secrets = self.commit_all()
-        data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
+        data = self.assert_ok(self.prove("bidder_0", secrets["bidder_0"]))
         self.assertTrue(data["proof_valid"])
-        bits = (5000 - 100).bit_length()  # one bit commitment per bit of max - min
-        for side in ("low", "high"):
-            self.assertEqual(len(data["proof_public"][side]["bit_commitments"]), bits)
         self.assertTrue(self.state()["bidders"][0]["proof_valid"])
+
+    def test_bids_on_the_bounds_prove_valid(self):
+        secrets = self.commit_all({"bidder_0": 100, "bidder_1": 5000, "bidder_2": 1500})
+        for bidder_id in ("bidder_0", "bidder_1"):
+            with self.subTest(bidder_id=bidder_id):
+                data = self.assert_ok(self.prove(bidder_id, secrets[bidder_id]))
+                self.assertTrue(data["proof_valid"])
 
     def test_rejects_proof_before_everyone_committed(self):
         secrets = self.commit_all({"bidder_0": 1200})
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
+        self.assert_error(self.prove("bidder_0", secrets["bidder_0"]))
 
     def test_rejects_unknown_bidder(self):
-        self.commit_all()
-        resp = self.post("/api/prove", bidder_id="bidder_99", bid=1200, randomness_hex="00" * 32)
-        self.assert_error(resp)
-
-    def test_rejects_bidder_without_commitment(self):
-        self.commit_all({"bidder_0": 1200})
-        resp = self.post("/api/prove", bidder_id="bidder_1", bid=1800, randomness_hex="00" * 32)
-        self.assert_error(resp)
-
-    def test_rejects_malformed_payload(self):
         secrets = self.commit_all()
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", bid=1200))
-        opening = {**secrets["bidder_0"], "bid": "lots"}
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **opening))
-        opening = {**secrets["bidder_0"], "randomness_hex": 12345}
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **opening))
+        proof = self.make_proof("bidder_0", secrets["bidder_0"])
+        self.assert_error(self.post("/api/prove", bidder_id="bidder_99", proof=proof))
 
-    def test_rejects_opening_that_does_not_match_the_commitment(self):
+    def test_malformed_proof_is_rejected_without_disqualifying(self):
         secrets = self.commit_all()
-        wrong_randomness = {**secrets["bidder_0"], "randomness_hex": "ab" * 32}
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **wrong_randomness))
-        wrong_bid = {**secrets["bidder_1"], "bid": 4999}
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_1", **wrong_bid))
+        valid = self.make_proof("bidder_0", secrets["bidder_0"])
+        cases = {
+            "missing": None,
+            "not an object": "proof",
+            "missing a side": {"low": valid["low"]},
+            "malformed point": {
+                **valid,
+                "low": {**valid["low"], "bit_commitments": ["02" + "zz" * 32]},
+            },
+        }
+        for label, proof in cases.items():
+            with self.subTest(label):
+                body = {} if proof is None else {"proof": proof}
+                self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **body))
+        # Rejected before reaching the auction, so the bidder can still prove.
+        self.assertTrue(self.assert_ok(self.prove("bidder_0", secrets["bidder_0"]))["proof_valid"])
 
-    def test_rejects_claimed_bid_outside_the_range(self):
+    def test_proof_for_another_statement_is_recorded_invalid(self):
         secrets = self.commit_all()
-        opening = {**secrets["bidder_0"], "bid": 99_999}
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **opening))
+        cases = {
+            "bidder_0": {"bounds": (0, 10**9)},  # another range
+            "bidder_1": {"auction_id": "0" * 32},  # another auction
+        }
+        for bidder_id, kwargs in cases.items():
+            with self.subTest(**kwargs):
+                data = self.assert_ok(self.prove(bidder_id, secrets[bidder_id], **kwargs))
+                self.assertFalse(data["proof_valid"])
+
+    def test_copied_proof_is_recorded_invalid(self):
+        # Carol submits Alice's valid proof: it is about Alice's commitment and
+        # bound to Alice's bidder id, so it says nothing about Carol's bid.
+        secrets = self.commit_all()
+        alices_proof = self.make_proof("bidder_0", secrets["bidder_0"])
+        data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_2", proof=alices_proof))
+        self.assertFalse(data["proof_valid"])
+
+    def test_out_of_range_bid_cannot_get_a_valid_proof(self):
+        # The server cannot reject the commitment (it never sees the bid), but
+        # the bidder can neither prove it honestly nor reuse another proof.
+        secrets = self.commit_all({**BIDS, "bidder_0": 99_999})
+        with self.assertRaises(ValueError):
+            self.make_proof("bidder_0", secrets["bidder_0"])
+        honest_bid = {**secrets["bidder_0"], "bid": 1200}
+        other = commit(1200)
+        honest_bid.update(
+            commitment_hex=encode_point(other.point),
+            randomness_hex=encode_scalar(other.blinding),
+        )
+        data = self.assert_ok(self.prove("bidder_0", honest_bid))
+        self.assertFalse(data["proof_valid"])
 
     def test_rejects_double_proof(self):
         secrets = self.commit_all()
-        self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
-        self.assert_error(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
+        self.assert_ok(self.prove("bidder_0", secrets["bidder_0"]))
+        self.assert_error(self.prove("bidder_0", secrets["bidder_0"]))
 
     def test_phase_advances_once_everyone_proved(self):
         self.prove_all(self.commit_all())
         self.assertEqual(self.state()["state"], "proved")
-
-    def test_proof_numbers_are_exact_in_javascript(self):
-        secrets = self.commit_all()
-        data = self.assert_ok(self.post("/api/prove", bidder_id="bidder_0", **secrets["bidder_0"]))
-
-        def ints(value):
-            """Every integer anywhere in a decoded JSON value."""
-            if isinstance(value, dict):
-                value = list(value.values())
-            if isinstance(value, list):
-                return [i for item in value for i in ints(item)]
-            return [value] if isinstance(value, int) and not isinstance(value, bool) else []
-
-        for number in ints(data):
-            self.assertLessEqual(abs(number), 2**53 - 1)
 
 
 class TestReveal(ApiTestCase):
@@ -313,15 +372,18 @@ class TestReveal(ApiTestCase):
         super().setUp()
         self.create()
 
+    def reveal(self, bidder_id, secret):
+        return self.post("/api/reveal", bidder_id=bidder_id, **opening(secret))
+
     def test_rejects_reveal_before_everyone_proved(self):
         secrets = self.commit_all()
-        self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
+        self.assert_error(self.reveal("bidder_0", secrets["bidder_0"]))
 
     def test_full_auction_highest_verified_bid_wins(self):
         secrets = self.commit_all()
         self.prove_all(secrets)
         for bidder_id, secret in secrets.items():
-            data = self.assert_ok(self.post("/api/reveal", bidder_id=bidder_id, **secret))
+            data = self.assert_ok(self.reveal(bidder_id, secret))
             self.assertTrue(data["verified"])
 
         # The last reveal finishes the auction and announces the winner.
@@ -332,6 +394,10 @@ class TestReveal(ApiTestCase):
         self.assertEqual(state["winner"]["bidder_id"], "bidder_1")
         revealed = {b["bidder_id"]: b["revealed_bid"] for b in state["bidders"]}
         self.assertEqual(revealed, BIDS)
+        # Anyone can now check every opening against its commitment.
+        for b in state["bidders"]:
+            point, blinding = decode_point(b["commitment_hex"]), decode_scalar(b["randomness_hex"])
+            self.assertTrue(verify(point, b["revealed_bid"], blinding))
 
     def test_wrong_opening_marks_cheater_and_excludes_them(self):
         secrets = self.commit_all()
@@ -339,7 +405,7 @@ class TestReveal(ApiTestCase):
         # Bob opens his commitment to a higher bid than he committed to.
         secrets["bidder_1"]["bid"] = 4999
         for bidder_id, secret in secrets.items():
-            data = self.assert_ok(self.post("/api/reveal", bidder_id=bidder_id, **secret))
+            data = self.assert_ok(self.reveal(bidder_id, secret))
             self.assertEqual(data["verified"], bidder_id != "bidder_1")
 
         self.assertEqual(data["winner"]["name"], "Carol")
@@ -349,14 +415,16 @@ class TestReveal(ApiTestCase):
         secrets = self.commit_all()
         self.prove_all(secrets)
         self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", bid=1200))
-        opening = {**secrets["bidder_0"], "bid": "lots"}
-        self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **opening))
+        for bad_bid in ("lots", 1200.0, True):
+            with self.subTest(bid=bad_bid):
+                typo = {**opening(secrets["bidder_0"]), "bid": bad_bid}
+                self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **typo))
 
     def test_rejects_double_reveal(self):
         secrets = self.commit_all()
         self.prove_all(secrets)
-        self.assert_ok(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
-        self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
+        self.assert_ok(self.reveal("bidder_0", secrets["bidder_0"]))
+        self.assert_error(self.reveal("bidder_0", secrets["bidder_0"]))
 
     def test_malformed_randomness_is_rejected_without_disqualifying(self):
         secrets = self.commit_all()
@@ -368,11 +436,28 @@ class TestReveal(ApiTestCase):
         )
         for bad in malformed:
             with self.subTest(bad=bad):
-                typo = {**secrets["bidder_0"], "randomness_hex": bad}
+                typo = {**opening(secrets["bidder_0"]), "randomness_hex": bad}
                 self.assert_error(self.post("/api/reveal", bidder_id="bidder_0", **typo))
         # Rejected before reaching the auction, so the bidder can still reveal.
-        data = self.assert_ok(self.post("/api/reveal", bidder_id="bidder_0", **secrets["bidder_0"]))
+        data = self.assert_ok(self.reveal("bidder_0", secrets["bidder_0"]))
         self.assertTrue(data["verified"])
+
+    def test_numbers_are_exact_in_javascript(self):
+        secrets = self.commit_all()
+        self.prove_all(secrets)
+        for bidder_id, secret in secrets.items():
+            self.assert_ok(self.reveal(bidder_id, secret))
+
+        def ints(value):
+            """Every integer anywhere in a decoded JSON value."""
+            if isinstance(value, dict):
+                value = list(value.values())
+            if isinstance(value, list):
+                return [i for item in value for i in ints(item)]
+            return [value] if isinstance(value, int) and not isinstance(value, bool) else []
+
+        for number in ints(self.state()):
+            self.assertLessEqual(abs(number), 2**53 - 1)
 
 
 class TestRequestFormat(ApiTestCase):

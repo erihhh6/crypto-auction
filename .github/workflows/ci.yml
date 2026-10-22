@@ -72,11 +72,21 @@ jobs:
           cache: pip
           cache-dependency-path: requirements*.txt
 
+      # tests/test_browser_interop.py runs the browser's crypto module under
+      # Node to check the server accepts what the page produces.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
       # Coverage settings and the minimum threshold live in pyproject.toml.
+      # REQUIRE_NODE makes the interop tests fail rather than skip without Node.
       - name: Run tests with coverage
+        env:
+          REQUIRE_NODE: "1"
         run: >-
           pytest --cov
           --cov-report=term-missing

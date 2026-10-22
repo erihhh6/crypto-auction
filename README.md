@@ -9,13 +9,16 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 > Built as a portfolio project to demonstrate applied cryptography concepts,
 > using Python's standard library, Flask, and the pure-Python
-> [`ecdsa`](https://pypi.org/project/ecdsa/) package for secp256k1 arithmetic.
+> [`ecdsa`](https://pypi.org/project/ecdsa/) package for secp256k1 arithmetic
+> on the server, and a vendored copy of
+> [`@noble/secp256k1`](https://github.com/paulmillr/noble-secp256k1) in the browser.
 
 > [!WARNING]
 > **Work in progress.** This started as a prototype and is being hardened step
-> by step. One headline guarantee does **not** hold yet: the server sees every
-> bid in plaintext, because it computes commitments and proofs on the bidders'
-> behalf. See [Limitations](#limitations) for the current status.
+> by step. The cryptographic guarantees below now hold under the
+> honest-but-curious model, but the application around them is not
+> production-ready yet: there is no authentication and no deadlines, among
+> others. See [Limitations](#limitations).
 
 ---
 
@@ -29,7 +32,7 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 | Property | Mechanism | Intended guarantee | Status |
 |---|---|---|---|
-| **Hiding** | Pedersen commitment `C = bid·G + r·H` | Auctioneer cannot learn bids before reveal | **Not yet**: the commitment is perfectly hiding, but the server receives the bid in plaintext |
+| **Hiding** | Pedersen commitment `C = bid·G + r·H`, computed in the browser | Auctioneer cannot learn bids before reveal | Holds: the server receives only commitments and proofs until the reveal |
 | **Binding** | Discrete logarithm hardness on secp256k1 | Bidders cannot change their bid after committing | Holds |
 | **Soundness** | ZK range proof (bit decomposition + OR-proofs, Fiat-Shamir) | Bids provably within `[min, max]` without disclosure | Holds |
 | **Verifiability** | Commitment opening at reveal | Anyone can audit the final result | Holds: openings are public after the reveal |
@@ -38,9 +41,9 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 
 ## Security Model
 
-**Target model, honest-but-curious (semi-honest)**: the auctioneer follows the
-protocol but tries to learn bids before the reveal phase. The protocol is
-designed so that:
+**Honest-but-curious (semi-honest)**: the auctioneer follows the protocol but
+tries to learn bids before the reveal phase. Each bidder's browser computes the
+commitment and the range proof itself (`static/auction-crypto.js`), so:
 
 ```
 Phase 1 — COMMIT:   auctioneer sees only C = bid·G + r·H
@@ -48,9 +51,13 @@ Phase 2 — ZK PROVE: auctioneer knows bid ∈ [min, max] without seeing bid
 Phase 3 — REVEAL:   auctioneer verifies bid·G + r·H == C
 ```
 
-**The current implementation does not meet this model yet.** The browser sends
-the bid to the server, which computes the commitment and the proof itself, so
-the auctioneer learns every bid in phase 1.
+The bid and its blinding factor `r` leave the browser only at the reveal; a
+test checks exactly what each request sends (`tests/js/app-flow.test.mjs`).
+
+One assumption is inherent to any web application: bidders run JavaScript that
+the auctioneer serves. A *malicious* (rather than curious) server could serve
+code that leaks bids. Closing that gap would need code the bidder obtains
+independently, such as a pinned, reviewed release or a native client.
 
 Bidders are also honest-but-curious among themselves — they see each other's
 commitments but not the underlying bid values until phase 3.
@@ -77,8 +84,11 @@ PHASE 3 — REVEAL
   Winner = highest verified in-range bid; ties go to the earliest commitment
 ```
 
-This is the intended protocol. In the current implementation the server
-performs the bidder's steps in phases 1 and 2 (see [Limitations](#limitations)).
+Phases 1 and 2 run in the bidder's browser; the server stores and verifies
+what it receives. The Python and JavaScript implementations share one wire
+format and one Fiat-Shamir transcript encoding, and
+`tests/test_browser_interop.py` checks that the server accepts exactly what the
+browser produces.
 
 ---
 
@@ -89,6 +99,9 @@ pip install -r requirements.txt   # installs the crypto_auction package (editabl
 python -m crypto_auction.web
 # Open http://localhost:5000
 ```
+
+The page proves bids with the browser's Web Crypto API, which is only
+available in a secure context: open it on `localhost`, or serve it over HTTPS.
 
 For local development with auto-reload and the interactive debugger
 (never enable this on a reachable host):
@@ -113,8 +126,12 @@ pytest --cov                # test suite with branch coverage (fails below the f
 ruff check .                # lint
 ruff format --check .       # formatting
 python -m mypy              # strict type check of src/ and examples/
-node --test "tests/js/*.test.mjs"   # frontend rendering tests (Node 22+, no npm install)
+node --test "tests/js/*.test.mjs"   # frontend tests: rendering, request flow, browser crypto
 ```
+
+The frontend tests need Node 22+ and no `npm install`. `pytest` also runs
+`tests/test_browser_interop.py`, which drives the browser's crypto module with
+Node; without Node those tests are skipped, unless `REQUIRE_NODE=1` (as in CI).
 
 Known, not-yet-fixed bugs are recorded as tests that assert the correct
 behaviour, marked `@known_bug(...)` (a strict `xfail`, see `tests/support.py`).
@@ -141,23 +158,29 @@ crypto-auction/
 │       ├── range_proof.py    # ZK range proof by bit decomposition
 │       ├── transcript.py     # Unambiguous encoding for Fiat-Shamir transcripts
 │       ├── auction.py        # State machine + auction logic
-│       ├── service.py        # Runs one auction and the server's protocol steps
+│       ├── service.py        # Runs one auction: records and verifies what bidders send
 │       └── web/              # Flask app: create_app(), python -m crypto_auction.web
 │           ├── api.py        # /api blueprint: routes and request validation
 │           ├── templates/
 │           │   └── index.html  # Single page, 3-panel layout
 │           └── static/
 │               ├── app.js    # Frontend SPA (vanilla JS)
-│               └── style.css # Dark theme CSS
+│               ├── auction-crypto.js  # Bidder-side commitments and range proofs
+│               ├── style.css # Dark theme CSS
+│               └── vendor/   # Pinned third-party code (@noble/secp256k1) and provenance
 ├── tests/
 │   ├── js/
-│   │   └── render.test.mjs   # Frontend rendering (HTML escaping, proof summary), via node --test
+│   │   ├── render.test.mjs   # Frontend rendering (HTML escaping, proof summary)
+│   │   ├── app-flow.test.mjs # What each request sends: no bid before the reveal
+│   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
+│   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests
 │   ├── support.py            # Shared helpers (known_bug marker)
 │   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
 │   ├── test_bit_proof.py     # Bit proof: completeness, soundness, binding
 │   ├── test_range_proof.py   # Range proof, incl. wrap-around and non-bit attacks
 │   ├── test_auction.py       # State machine, proof binding and winner selection
 │   ├── test_api.py           # REST API via Flask's test client
+│   ├── test_browser_interop.py  # Server accepts what the browser produces (needs Node)
 │   └── test_app.py           # Server entry point (debug mode)
 ├── pyproject.toml            # Package metadata and tool configuration
 ├── requirements.txt          # Installs the package and its dependencies
@@ -211,21 +234,22 @@ Every bit proof's Fiat-Shamir challenge covers a domain tag, both generators,
 the commitment, the range, the auction and bidder, the side and bit position,
 and the proof's announcements, so a proof cannot be reused for any other
 statement. A proof for a typical bid range (13 bits per side) is about 10 KB
-of JSON and takes about 0.1 s to verify in pure Python. Bulletproofs would be
-far smaller; this construction trades size for simplicity.
+of JSON; it takes about 0.5 s to generate in the browser and under 0.1 s to
+verify on the server. Bulletproofs would be far smaller; this construction
+trades size for simplicity.
 
 ---
 
 ## Limitations
 
-- **Bids pass through the server**: the browser sends the bid in plaintext to
-  `/api/commit`, and the server computes the commitment and, later, the range
-  proof. The auctioneer therefore learns every bid in phase 1. The target
-  design computes both in the browser so the server never sees the bid.
-- **Not constant-time**: elliptic-curve arithmetic is pure Python (`ecdsa`),
-  so its timing depends on secret values. Proofs should be generated where
-  timing cannot be observed, which the target design (proving in the bidder's
-  browser) provides.
+- **The page is served by the auctioneer**: bidders trust it to serve the
+  genuine `auction-crypto.js` (see [Security Model](#security-model)).
+- **Not strictly constant-time**: proofs are generated in JavaScript, where
+  BigInt arithmetic cannot be constant-time. `@noble/secp256k1` uses a
+  fixed-length ladder with dummy additions to reduce timing leakage; the
+  server only verifies public data.
+- **Secrets live in page memory**: reloading the page loses a bidder's blinding
+  factor, and with it the ability to reveal.
 - **No authentication**: any client can act as any bidder or reset the auction.
 - **No deadlines**: a bidder who never commits or reveals stalls the auction.
 - **Single-server model**: Production would use MPC for the auctioneer role.
