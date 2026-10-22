@@ -12,11 +12,16 @@ State transitions:
   PROVED    → FINISHED  : all bidders have revealed (bid, blinding); the winner
                           is determined from the verified reveals
 
+Bidders prove who they are with a secret join token, issued when the auction
+is created (issue_join_tokens, authenticate).
+
 Security model: honest-but-curious auctioneer.
 The auctioneer sees only commitments and ZK proofs in phases 1-2 (bidders
 compute both themselves), and learns actual bid values only in phase 3.
 """
 
+import hashlib
+import hmac
 import secrets
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -40,6 +45,12 @@ def bid_proof_context(auction_id: str, bidder_id: str) -> bytes:
     return encode_parts(_PROOF_DOMAIN, auction_id.encode(), bidder_id.encode())
 
 
+def _token_digest(token: str) -> bytes:
+    # A fast hash is enough: join tokens are 256-bit random values, not
+    # guessable passwords that would need a slow, salted hash.
+    return hashlib.sha256(token.encode()).digest()
+
+
 class AuctionState(Enum):
     OPEN = "open"
     COMMITTED = "committed"
@@ -53,6 +64,9 @@ class BidderState:
 
     bidder_id: str
     name: str
+    # Never public. Only the join token's digest is kept, so this state never
+    # holds a usable token.
+    token_digest: bytes | None = None
     # Phase 1 — public after commit
     commitment_hex: str | None = None  # canonical encoding of C = bid·G + blinding·H
     commit_order: int | None = None  # 0 for the first commitment received, 1 next, ...
@@ -136,6 +150,37 @@ class Auction:
         return bid_proof_context(self.auction_id, bidder_id)
 
     # ------------------------------------------------------------------
+    # Bidder identity
+    # ------------------------------------------------------------------
+
+    def issue_join_tokens(self) -> dict[str, str]:
+        """
+        Give every bidder a new secret join token, which authenticates them.
+
+        The tokens are returned once, to be handed to the bidders; the auction
+        keeps only their SHA-256 digests.
+
+        Returns:
+            bidder_id → join token (URL-safe text encoding 256 random bits).
+        """
+        tokens = {}
+        for bidder_id, bidder in self.bidders.items():
+            token = secrets.token_urlsafe(32)
+            bidder.token_digest = _token_digest(token)
+            tokens[bidder_id] = token
+        return tokens
+
+    def authenticate(self, token: str) -> str | None:
+        """The bidder_id this join token belongs to, or None if it is no bidder's."""
+        digest = _token_digest(token)
+        for bidder_id, bidder in self.bidders.items():
+            # compare_digest, as for any secret: the time taken does not
+            # depend on how much of a guess matched.
+            if bidder.token_digest is not None and hmac.compare_digest(bidder.token_digest, digest):
+                return bidder_id
+        return None
+
+    # ------------------------------------------------------------------
     # Phase 1 — Commit
     # ------------------------------------------------------------------
 
@@ -155,8 +200,9 @@ class Auction:
             The phase after this commitment, and a message for the protocol log.
 
         Raises:
-            ValueError: On invalid state, unknown bidder_id, duplicate commit, or
-                a commitment that is not a canonically encoded curve point.
+            ValueError: On invalid state, unknown bidder_id, duplicate commit, a
+                commitment that is not a canonically encoded curve point, or one
+                that another bidder already submitted.
         """
         if self.state not in (AuctionState.OPEN, AuctionState.COMMITTED):
             raise ValueError(
@@ -171,6 +217,13 @@ class Auction:
                 f"Bidder '{bidder.name}' has already committed. Double-commit is not allowed."
             )
         decode_point(commitment_hex)  # raises ValueError unless canonical and on the curve
+        # Honest commitments use fresh random blindings and practically never
+        # collide, so one equal to another bidder's is a copy. The copier could
+        # neither prove nor open it; rejecting it keeps every commitment tied to
+        # the bidder who made it. Encodings are canonical, so comparing the hex
+        # compares the points.
+        if any(b.commitment_hex == commitment_hex for b in self.bidders.values()):
+            raise ValueError("This commitment was already submitted by another bidder.")
 
         bidder.commitment_hex = commitment_hex
         bidder.commit_order = self._commits_received

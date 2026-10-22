@@ -17,8 +17,8 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > **Work in progress.** This started as a prototype and is being hardened step
 > by step. The cryptographic guarantees below now hold under the
 > honest-but-curious model, but the application around them is not
-> production-ready yet: there is no authentication and no deadlines, among
-> others. See [Limitations](#limitations).
+> production-ready yet: there are no deadlines, and anyone can reset the
+> auction, among others. See [Limitations](#limitations).
 
 ---
 
@@ -62,15 +62,27 @@ independently, such as a pinned, reviewed release or a native client.
 Bidders are also honest-but-curious among themselves — they see each other's
 commitments but not the underlying bid values until phase 3.
 
+**Bidder identity.** Each bidder acts through a secret join token, issued when
+the auction is created and sent as `Authorization: Bearer <token>`. Nobody can
+commit, prove or reveal for another bidder, and a copy of another bidder's
+commitment is rejected. The server stores only SHA-256 digests of the tokens.
+Whoever creates the auction receives every token to hand out, so tokens
+protect bidders from each other and from outsiders, not from the organizer.
+
 ---
 
 ## Protocol
 
 ```
+SETUP
+  The organizer creates the auction; each bidder receives a secret join
+  token, which authenticates every request they make below
+
 PHASE 1 — COMMIT
   Bidder i chooses bid_i and a random blinding factor r_i ∈ [0, n)
   Computes   C_i = bid_i·G + r_i·H        (Pedersen commitment on secp256k1)
-  Sends C_i → auctioneer stores it (bid_i, r_i remain private)
+  Sends C_i → auctioneer stores it (bid_i, r_i remain private), unless
+  another bidder already submitted the same C_i
 
 PHASE 2 — ZK PROVE
   Bidder i proves that C_i hides a value in [min_bid, max_bid]
@@ -158,7 +170,7 @@ crypto-auction/
 │       ├── range_proof.py    # ZK range proof by bit decomposition
 │       ├── transcript.py     # Unambiguous encoding for Fiat-Shamir transcripts
 │       ├── auction.py        # State machine + auction logic
-│       ├── service.py        # Runs one auction: records and verifies what bidders send
+│       ├── service.py        # Runs one auction: authenticates bidders, verifies what they send
 │       └── web/              # Flask app: create_app(), python -m crypto_auction.web
 │           ├── api.py        # /api blueprint: routes and request validation
 │           ├── templates/
@@ -171,7 +183,7 @@ crypto-auction/
 ├── tests/
 │   ├── js/
 │   │   ├── render.test.mjs   # Frontend rendering (HTML escaping, proof summary)
-│   │   ├── app-flow.test.mjs # What each request sends: no bid before the reveal
+│   │   ├── app-flow.test.mjs # What each request sends, and as whom: no bid before the reveal
 │   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
 │   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests
 │   ├── support.py            # Shared helpers (known_bug marker)
@@ -250,7 +262,11 @@ trades size for simplicity.
   server only verifies public data.
 - **Secrets live in page memory**: reloading the page loses a bidder's blinding
   factor, and with it the ability to reveal.
-- **No authentication**: any client can act as any bidder or reset the auction.
+- **The organizer is not authenticated**: anyone can replace the auction with a
+  new one or reset it. (Bidders are authenticated, see
+  [Security Model](#security-model).)
+- **One page plays every bidder**: the page that creates the auction receives
+  every join token; there is no per-bidder view yet.
 - **No deadlines**: a bidder who never commits or reveals stalls the auction.
 - **Single-server model**: Production would use MPC for the auctioneer role.
 - **In-memory state**: No database; a server restart resets the auction.

@@ -3,11 +3,14 @@
 // ---------------------------------------------------------------------------
 // Local state. bidderSecrets holds each bidder's opening, created in this
 // browser at commit time: the bid and randomness_hex (the commitment's
-// blinding factor r). Both stay here until the reveal.
+// blinding factor r). Both stay here until the reveal. joinTokens prove to
+// the server which bidder is acting; this page plays every bidder, so it
+// holds all of them.
 // ---------------------------------------------------------------------------
 const localState = {
   auction: null,           // config returned by /api/create (includes auction_id)
   serverState: null,       // latest public state from /api/state
+  joinTokens: {},          // { bidder_id: join_token }, from /api/create
   bidderSecrets: {},       // { bidder_id: { bid: int, randomness_hex: str, commitment_hex: str } }
 };
 
@@ -55,9 +58,10 @@ function timestamp() {
   return new Date().toLocaleTimeString("en-GB");
 }
 
-/** Safe fetch with JSON body, returns parsed JSON or throws */
-async function apiFetch(path, method = "GET", body = null) {
+/** Safe fetch with JSON body, returns parsed JSON or throws. A join token authenticates a bidder. */
+async function apiFetch(path, method = "GET", body = null, joinToken = null) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (joinToken !== null) opts.headers.Authorization = `Bearer ${joinToken}`;
   if (body !== null) opts.body = JSON.stringify(body);
   const res = await fetch(path, opts);
   const json = await res.json();
@@ -120,8 +124,7 @@ async function createAuction() {
       bidders:   names,
     });
 
-    localState.auction = data;
-    localState.bidderSecrets = {};
+    rememberAuction(data);
 
     document.getElementById("setup-panel").style.display = "none";
     document.getElementById("auction-view").style.display = "grid";
@@ -148,16 +151,28 @@ function showSetupError(msg) {
   el.style.display = "block";
 }
 
+/** Start a session from the /api/create response, which carries every bidder's join token. */
+function rememberAuction(data) {
+  localState.auction = data;
+  localState.joinTokens = Object.fromEntries(data.bidders.map(b => [b.bidder_id, b.join_token]));
+  localState.bidderSecrets = {};
+}
+
 // ---------------------------------------------------------------------------
 // Bidder-side protocol steps. The bid and its blinding factor stay in this
 // browser until the reveal: the server receives only the commitment and the
 // zero-knowledge proof, both computed here by auction-crypto.js.
 // ---------------------------------------------------------------------------
 
+/** POST as a bidder. The server identifies the bidder by their join token alone. */
+function postAsBidder(bidderId, path, body) {
+  return apiFetch(path, "POST", body, localState.joinTokens[bidderId]);
+}
+
 /** Commit to a bid locally and send only the commitment. */
 async function submitCommitment(bidderId, bid) {
   const { commitmentHex, blindingHex } = window.auctionCrypto.commitBid(BigInt(bid));
-  await apiFetch("/api/commit", "POST", { bidder_id: bidderId, commitment_hex: commitmentHex });
+  await postAsBidder(bidderId, "/api/commit", { commitment_hex: commitmentHex });
   // Kept only in memory, and sent at the reveal.
   localState.bidderSecrets[bidderId] = {
     bid,
@@ -180,15 +195,14 @@ async function submitProof(bidderId) {
     auctionId:     auction_id,
     bidderId,
   });
-  const data = await apiFetch("/api/prove", "POST", { bidder_id: bidderId, proof });
+  const data = await postAsBidder(bidderId, "/api/prove", { proof });
   return { proof, data };
 }
 
 /** Reveal the opening: the first time the bid itself leaves the browser. */
 function submitReveal(bidderId) {
   const secret = localState.bidderSecrets[bidderId];
-  return apiFetch("/api/reveal", "POST", {
-    bidder_id:      bidderId,
+  return postAsBidder(bidderId, "/api/reveal", {
     bid:            secret.bid,
     randomness_hex: secret.randomness_hex,
   });
@@ -595,6 +609,7 @@ async function resetAuction() {
   // Clear client state
   localState.auction = null;
   localState.serverState = null;
+  localState.joinTokens = {};
   localState.bidderSecrets = {};
 
   // Reset UI
@@ -697,8 +712,7 @@ async function startDemo() {
     return;
   }
 
-  localState.auction = auctionData;
-  localState.bidderSecrets = {};
+  rememberAuction(auctionData);
 
   // Switch to auction view
   document.getElementById("setup-panel").style.display = "none";

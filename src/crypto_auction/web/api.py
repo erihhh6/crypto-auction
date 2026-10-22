@@ -13,6 +13,11 @@ Endpoints:
   POST /api/reveal   — reveal bid + blinding factor, verify commitment
   POST /api/reset    — reset the auction session entirely
 
+Bidders:
+  /api/create returns a secret join token per bidder. Commit, prove and reveal
+  act for the bidder whose token is sent as "Authorization: Bearer <token>";
+  a missing or invalid token gets a 401.
+
 Request rules:
   Every POST must be sent as application/json (415 otherwise) with a JSON object
   body (400 otherwise). Integers must lie in [0, 2**53 - 1]. Every error,
@@ -33,7 +38,12 @@ from werkzeug.exceptions import HTTPException
 from crypto_auction.auction import AuctionConfig
 from crypto_auction.pedersen import decode_scalar
 from crypto_auction.range_proof import RangeProof
-from crypto_auction.service import AuctionRuleError, AuctionService, NoAuctionError
+from crypto_auction.service import (
+    AuctionRuleError,
+    AuctionService,
+    AuthenticationError,
+    NoAuctionError,
+)
 
 # Largest integer the API accepts. JSON numbers above 2**53 - 1 are not exact
 # in JavaScript (RFC 7493, I-JSON), and the browser handles bids as numbers: a
@@ -82,6 +92,13 @@ def _no_auction(exc: NoAuctionError) -> ResponseReturnValue:
     return _error(404, str(exc))
 
 
+def _unauthenticated(exc: AuthenticationError) -> ResponseReturnValue:
+    response = _error(401, str(exc))
+    # A 401 must name the authentication scheme to use (RFC 9110, RFC 6750).
+    response.headers["WWW-Authenticate"] = "Bearer"
+    return response
+
+
 def _rule_violation(exc: AuctionRuleError) -> ResponseReturnValue:
     return _error(400, str(exc))
 
@@ -91,6 +108,7 @@ def register_error_handlers(app: Flask) -> None:
     # never reach a blueprint) also get the JSON envelope.
     app.register_error_handler(HTTPException, json_http_error)
     app.register_error_handler(NoAuctionError, _no_auction)
+    app.register_error_handler(AuthenticationError, _unauthenticated)
     app.register_error_handler(AuctionRuleError, _rule_violation)
 
 
@@ -106,6 +124,20 @@ def require_json_posts() -> None:
     """
     if request.method == "POST" and not request.is_json:
         abort(415, description="Request body must be JSON (Content-Type: application/json).")
+
+
+def _join_token() -> str:
+    """
+    The bidder's join token, sent as "Authorization: Bearer <token>".
+
+    A header rather than a body field keeps the secret out of request bodies,
+    and unlike a cookie the browser never attaches it on its own. Without a
+    Bearer token this returns "", which authenticates nobody.
+    """
+    auth = request.authorization
+    if auth is None or auth.type != "bearer" or not auth.token:
+        return ""
+    return auth.token
 
 
 def _bad_request(message: str) -> NoReturn:
@@ -208,8 +240,11 @@ def create_auction() -> ResponseReturnValue:
         "item_name":  str,
         "min_bid":    int,
         "max_bid":    int,
-        "bidders":    [{"bidder_id": str, "name": str}, ...]
+        "bidders":    [{"bidder_id": str, "name": str, "join_token": str}, ...]
       }
+
+    Each join_token must reach only its bidder, and this is the only time the
+    tokens are sent: the server keeps only their digests.
     """
     data = _json_object()
 
@@ -235,9 +270,12 @@ def create_auction() -> ResponseReturnValue:
         item_name=item_name,
         bidder_names=tuple(bidder_names),
     )
-    auction = _service().create(config)
+    auction, join_tokens = _service().create(config)
 
-    bidders_info = [{"bidder_id": bid_id, "name": b.name} for bid_id, b in auction.bidders.items()]
+    bidders_info = [
+        {"bidder_id": bidder_id, "name": b.name, "join_token": join_tokens[bidder_id]}
+        for bidder_id, b in auction.bidders.items()
+    ]
 
     return jsonify(
         {
@@ -272,10 +310,11 @@ def get_state() -> ResponseReturnValue:
 @bp.post("/commit")
 def submit_commit() -> ResponseReturnValue:
     """
-    Register a bidder's commitment, computed by the bidder.
+    Register the authenticated bidder's commitment, computed by the bidder.
 
+    Header: Authorization: Bearer <join_token>
     Body JSON:
-      { "bidder_id": str, "commitment_hex": str }
+      { "commitment_hex": str }
 
     commitment_hex is the Pedersen commitment C = bid·G + r·H as a compressed
     point; the bid and the blinding factor r stay with the bidder.
@@ -284,12 +323,12 @@ def submit_commit() -> ResponseReturnValue:
       { "success": bool, "phase": str, "message": str }
     """
     service = _service()
-    service.require_auction()  # 404 takes precedence over body validation
+    token = _join_token()
+    service.require_bidder(token)  # 404 and 401 take precedence over body validation
     data = _json_object()
-    bidder_id = _str_field(data, "bidder_id")
     commitment_hex = _str_field(data, "commitment_hex")
 
-    result = service.commit(bidder_id, commitment_hex)
+    result = service.commit(token, commitment_hex)
 
     return jsonify({"success": True, "phase": result.phase.value, "message": result.message})
 
@@ -302,10 +341,11 @@ def submit_commit() -> ResponseReturnValue:
 @bp.post("/prove")
 def submit_prove() -> ResponseReturnValue:
     """
-    Verify and record a bidder's ZK range proof, computed by the bidder.
+    Verify and record the authenticated bidder's ZK range proof.
 
+    Header: Authorization: Bearer <join_token>
     Body JSON:
-      { "bidder_id": str, "proof": { "low": {...}, "high": {...} } }
+      { "proof": { "low": {...}, "high": {...} } }
 
     The proof (RangeProof.to_dict() format) must show that the bidder's
     commitment hides a bid in [min_bid, max_bid], bound to this auction and
@@ -315,12 +355,12 @@ def submit_prove() -> ResponseReturnValue:
       { "success": bool, "proof_valid": bool, "phase": str, "message": str }
     """
     service = _service()
-    service.require_auction()  # 404 takes precedence over body validation
+    token = _join_token()
+    service.require_bidder(token)  # 404 and 401 take precedence over body validation
     data = _json_object()
-    bidder_id = _str_field(data, "bidder_id")
     proof = _proof_field(data)
 
-    result = service.prove(bidder_id, proof)
+    result = service.prove(token, proof)
 
     return jsonify(
         {
@@ -340,10 +380,12 @@ def submit_prove() -> ResponseReturnValue:
 @bp.post("/reveal")
 def submit_reveal() -> ResponseReturnValue:
     """
-    Reveal a bidder's (bid, blinding factor) and verify against their commitment.
+    Reveal the authenticated bidder's (bid, blinding factor) and verify it
+    against their commitment.
 
+    Header: Authorization: Bearer <join_token>
     Body JSON:
-      { "bidder_id": str, "bid": int, "randomness_hex": str }
+      { "bid": int, "randomness_hex": str }
 
     Response:
       {
@@ -354,13 +396,13 @@ def submit_reveal() -> ResponseReturnValue:
       }
     """
     service = _service()
-    service.require_auction()  # 404 takes precedence over body validation
+    token = _join_token()
+    service.require_bidder(token)  # 404 and 401 take precedence over body validation
     data = _json_object()
-    bidder_id = _str_field(data, "bidder_id")
     bid = _int_field(data, "bid")
     blinding = _blinding_field(data)
 
-    result = service.reveal(bidder_id, bid, blinding)
+    result = service.reveal(token, bid, blinding)
 
     return jsonify(
         {

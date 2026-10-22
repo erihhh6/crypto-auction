@@ -3,8 +3,11 @@ Application service: runs one auction on the server.
 
 Bidders compute their commitments and range proofs themselves (in the browser),
 so the service only records and verifies what they send; it never sees a bid
-before the reveal. It knows nothing about HTTP: the web layer maps
-NoAuctionError to 404 and AuctionRuleError to 400.
+before the reveal. A bidder is identified by the join token they present,
+never by an id they name.
+
+The service knows nothing about HTTP: the web layer maps NoAuctionError to 404,
+AuthenticationError to 401 and AuctionRuleError to 400.
 """
 
 import threading
@@ -21,6 +24,10 @@ from crypto_auction.auction import (
 
 class NoAuctionError(LookupError):
     """No auction has been created yet, or it was reset."""
+
+
+class AuthenticationError(Exception):
+    """The request carries no valid join token for the current auction."""
 
 
 class AuctionRuleError(Exception):
@@ -40,42 +47,65 @@ class AuctionService:
             raise NoAuctionError("No auction created yet.")
         return self._auction
 
-    def require_auction(self) -> None:
-        """Raise NoAuctionError unless an auction exists."""
-        with self._lock:
-            self._current()
+    def _authenticate(self, token: str) -> tuple[Auction, str]:
+        """
+        The current auction and the bidder_id that token belongs to.
 
-    def create(self, config: AuctionConfig) -> Auction:
-        """Start a new auction, replacing the current one."""
+        Operations call this while holding the lock until they are done, so a
+        token is checked against the very auction it then acts on; otherwise a
+        token from a replaced auction could act in the new one, whose bidders
+        reuse the same ids.
+        """
+        auction = self._current()
+        bidder_id = auction.authenticate(token)
+        if bidder_id is None:
+            raise AuthenticationError("Missing or invalid join token.")
+        return auction, bidder_id
+
+    def require_bidder(self, token: str) -> None:
+        """Raise NoAuctionError or AuthenticationError unless token is a bidder's."""
+        with self._lock:
+            self._authenticate(token)
+
+    def create(self, config: AuctionConfig) -> tuple[Auction, dict[str, str]]:
+        """
+        Start a new auction, replacing the current one.
+
+        Returns the auction and every bidder's join token (bidder_id → token).
+        The tokens cannot be retrieved later: the auction keeps only digests.
+        """
         with self._lock:
             self._auction = Auction(config)
-            return self._auction
+            return self._auction, self._auction.issue_join_tokens()
 
     def public_state(self) -> dict[str, Any]:
         with self._lock:
             return self._current().get_public_state()
 
-    def commit(self, bidder_id: str, commitment_hex: str) -> CommitResult:
-        """Record a bidder's Pedersen commitment (a compressed point)."""
+    def commit(self, token: str, commitment_hex: str) -> CommitResult:
+        """Record the token holder's Pedersen commitment (a compressed point)."""
         with self._lock:
+            auction, bidder_id = self._authenticate(token)
             try:
-                return self._current().submit_commitment(bidder_id, commitment_hex)
+                return auction.submit_commitment(bidder_id, commitment_hex)
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
 
-    def prove(self, bidder_id: str, proof_data: dict[str, Any]) -> ProofResult:
-        """Verify and record a bidder's range proof (RangeProof.to_dict() format)."""
+    def prove(self, token: str, proof_data: dict[str, Any]) -> ProofResult:
+        """Verify and record the token holder's range proof (RangeProof.to_dict() format)."""
         with self._lock:
+            auction, bidder_id = self._authenticate(token)
             try:
-                return self._current().submit_proof(bidder_id, proof_data)
+                return auction.submit_proof(bidder_id, proof_data)
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
 
-    def reveal(self, bidder_id: str, bid: int, blinding: int) -> RevealResult:
-        """Open a bidder's commitment; the last reveal determines the winner."""
+    def reveal(self, token: str, bid: int, blinding: int) -> RevealResult:
+        """Open the token holder's commitment; the last reveal determines the winner."""
         with self._lock:
+            auction, bidder_id = self._authenticate(token)
             try:
-                return self._current().submit_reveal(bidder_id, bid, blinding)
+                return auction.submit_reveal(bidder_id, bid, blinding)
             except ValueError as exc:
                 raise AuctionRuleError(str(exc)) from exc
 

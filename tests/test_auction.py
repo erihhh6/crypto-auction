@@ -74,6 +74,38 @@ class TestAuctionInit(unittest.TestCase):
         self.assertNotEqual(first.auction_id, second.auction_id)
 
 
+class TestBidderIdentity(unittest.TestCase):
+    def test_each_token_authenticates_its_own_bidder(self):
+        auction = make_auction()
+        tokens = auction.issue_join_tokens()
+        self.assertEqual(set(tokens), set(auction.bidders))
+        for bidder_id, token in tokens.items():
+            self.assertEqual(auction.authenticate(token), bidder_id)
+
+    def test_anything_else_authenticates_nobody(self):
+        auction = make_auction()
+        token = auction.issue_join_tokens()["bidder_0"]
+        guesses = {
+            "empty": "",
+            "a bidder id": "bidder_0",
+            "a prefix of a token": token[:-1],
+            "another auction's token": make_auction().issue_join_tokens()["bidder_0"],
+        }
+        for label, guess in guesses.items():
+            with self.subTest(label):
+                self.assertIsNone(auction.authenticate(guess))
+        # Before tokens are issued, not even a real one from elsewhere works.
+        self.assertIsNone(make_auction().authenticate(token))
+
+    def test_auction_keeps_only_token_digests(self):
+        auction = make_auction()
+        tokens = auction.issue_join_tokens()
+        # Everything the auction holds, including each BidderState.
+        held = repr(vars(auction)) + repr(auction.get_public_state())
+        for token in tokens.values():
+            self.assertNotIn(token, held)
+
+
 class TestPhase1Commit(unittest.TestCase):
     def test_commit_advances_to_committed_when_all_done(self):
         auction = make_auction(["Alice", "Bob"])
@@ -88,6 +120,14 @@ class TestPhase1Commit(unittest.TestCase):
         submit_commit(auction, "bidder_0", c)
         with self.assertRaises(ValueError):
             submit_commit(auction, "bidder_0", c)
+
+    def test_copy_of_another_bidders_commitment_raises(self):
+        auction = make_auction(["Alice", "Bob"])
+        c = commit(1000)
+        submit_commit(auction, "bidder_0", c)
+        with self.assertRaises(ValueError):
+            submit_commit(auction, "bidder_1", c)
+        self.assertIsNone(auction.bidders["bidder_1"].commitment_hex)
 
     def test_unknown_bidder_raises(self):
         auction = make_auction(["Alice"])
@@ -119,6 +159,11 @@ class TestPhase2Prove(unittest.TestCase):
         auction = make_auction(["Alice", "Bob"])
         with self.assertRaises(ValueError):
             auction.submit_proof("bidder_0", {})
+
+    def test_unknown_bidder_raises(self):
+        auction, _ = committed_auction(PROVE_BIDS)
+        with self.assertRaises(ValueError):
+            auction.submit_proof("bidder_99", {})
 
     def test_double_prove_raises(self):
         auction, openings = committed_auction(PROVE_BIDS)
@@ -173,6 +218,12 @@ class TestPhase3Reveal(unittest.TestCase):
     def test_state_is_finished_after_all_reveal(self):
         auction = run_full_auction({"Alice": 1000, "Bob": 2000})
         self.assertEqual(auction.state, AuctionState.FINISHED)
+
+    def test_unknown_bidder_raises(self):
+        auction, openings = proved_auction(PROVE_BIDS)
+        c = openings["bidder_0"]
+        with self.assertRaises(ValueError):
+            auction.submit_reveal("bidder_99", c.value, c.blinding)
 
     def test_cheater_excluded_from_winner(self):
         auction, openings = proved_auction({"Alice": 1000, "Bob": 500})

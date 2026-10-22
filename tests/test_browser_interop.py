@@ -95,12 +95,17 @@ class TestBrowserInterop(unittest.TestCase):
             "/api/create",
             json={"item_name": "x", "min_bid": 100, "max_bid": 5000, "bidders": ["A", "B"]},
         ).get_json()
+        auth = {
+            b["bidder_id"]: {"Authorization": f"Bearer {b['join_token']}"}
+            for b in created["bidders"]
+        }
         bids = {"bidder_0": 1200, "bidder_1": 1800}
         commitments = browser(*({"action": "commit", "bid": bid} for bid in bids.values()))
         openings = dict(zip(bids, commitments, strict=True))
         for bidder_id, c in openings.items():
-            body = {"bidder_id": bidder_id, "commitment_hex": c["commitment_hex"]}
-            self.assertEqual(client.post("/api/commit", json=body).status_code, 200)
+            body = {"commitment_hex": c["commitment_hex"]}
+            resp = client.post("/api/commit", json=body, headers=auth[bidder_id])
+            self.assertEqual(resp.status_code, 200)
 
         proofs = browser(
             *(
@@ -117,16 +122,14 @@ class TestBrowserInterop(unittest.TestCase):
             )
         )
         for bidder_id, proved in zip(openings, proofs, strict=True):
-            body = {"bidder_id": bidder_id, "proof": proved["proof"]}
-            self.assertTrue(client.post("/api/prove", json=body).get_json()["proof_valid"])
+            resp = client.post(
+                "/api/prove", json={"proof": proved["proof"]}, headers=auth[bidder_id]
+            )
+            self.assertTrue(resp.get_json()["proof_valid"])
 
         for bidder_id, c in openings.items():
-            body = {
-                "bidder_id": bidder_id,
-                "bid": bids[bidder_id],
-                "randomness_hex": c["randomness_hex"],
-            }
-            result = client.post("/api/reveal", json=body).get_json()
+            body = {"bid": bids[bidder_id], "randomness_hex": c["randomness_hex"]}
+            result = client.post("/api/reveal", json=body, headers=auth[bidder_id]).get_json()
             self.assertTrue(result["verified"])
         self.assertEqual(result["winner"]["bidder_id"], "bidder_1")
 
