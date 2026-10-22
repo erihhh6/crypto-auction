@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A padlock, in the commit colour: the sealed bid. -->
+  <rect x="5" y="14" width="22" height="16" rx="3" fill="#2563eb"/>
+  <path d="M10 14v-4a6 6 0 0 1 12 0v4" fill="none" stroke="#719af2" stroke-width="3"/>
+  <circle cx="16" cy="22" r="2.5" fill="#f1f5f9"/>
+</svg>

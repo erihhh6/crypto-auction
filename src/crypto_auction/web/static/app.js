@@ -132,6 +132,26 @@ function dismissToast(key) {
 }
 
 /**
+ * Have screen readers read a message out, politely: after what they are
+ * reading. For what changes without the reader's doing, like a new phase.
+ */
+function announce(message) {
+  document.getElementById("announcer").textContent = message;
+}
+
+/** What screen readers hear when the auction moves on to a state. */
+function phaseAnnouncement(state) {
+  if (state.state === "committed") {
+    return "The commit phase is over: bidders now prove that their bids are in range.";
+  }
+  if (state.state === "proved") return "The proving phase is over: bidders now reveal their bids.";
+  if (state.winner) {
+    return `The auction is over: ${state.winner.name} wins with ${fmtBid(state.winner.bid)}.`;
+  }
+  return "The auction is over, with no winner.";
+}
+
+/**
  * Show what went wrong with a bidder's last action on their card ("" clears
  * it). It stays until they try again or the auction moves to another phase.
  */
@@ -156,6 +176,7 @@ function addBidderInput() {
   const input = el("input", "bidder-name-input");
   input.type = "text";
   input.placeholder = "Bidder name";
+  input.setAttribute("aria-label", "Bidder name");
   // Its clicks are handled by the listener on #bidder-inputs (see wireUp).
   const remove = el("button", "btn-remove-bidder", "✕");
   remove.setAttribute("aria-label", "Remove bidder");
@@ -657,11 +678,14 @@ async function refreshState() {
   try {
     const data = await apiFetch(auctionUrl());
     if (count !== refreshCount) return; // a later refresh has started since
-    const finishedNow = data.state === "finished" && localState.serverState?.state !== "finished";
+    const previousPhase = localState.serverState?.state;
+    const finishedNow = data.state === "finished" && previousPhase !== "finished";
     localState.serverState = data;
     dismissToast("refresh");
     renderAll(data);
     scheduleNextRefresh(data);
+    // The phase is shown by colour; a screen reader is told it changed.
+    if (previousPhase && previousPhase !== data.state) announce(phaseAnnouncement(data));
     // However the auction ended: by this page's reveal, another bidder's on
     // their own device, or a deadline.
     if (finishedNow && data.winner) showWinnerModal(data.winner);
@@ -734,7 +758,11 @@ function renderPhaseIndicator(state) {
   const pills = document.querySelectorAll(".phase-pill");
   const activePill = PHASE_STEP[state.state] ?? "finished";
   pills.forEach(pill => {
-    pill.classList.toggle("active", pill.dataset.phase === activePill);
+    const active = pill.dataset.phase === activePill;
+    pill.classList.toggle("active", active);
+    // The colour shows the step in progress; aria-current tells screen readers.
+    if (active) pill.setAttribute("aria-current", "step");
+    else pill.removeAttribute("aria-current");
   });
 }
 
@@ -766,15 +794,23 @@ function setChildren(node, children) {
   while (node.children.length > children.length) node.lastElementChild.remove();
 }
 
+/** A phase badge: its label on screen, and (filled in later) its state in words. */
+function phaseBadge(label) {
+  const badge = el("span", "phase-badge");
+  const state = el("span", "sr-only");
+  badge.append(el("span", "", label), state);
+  return { badge, state };
+}
+
 /** A bidder's card: its elements, created once, which updateBidderCard fills in. */
 function createBidderCard(bidderId) {
   const view = {
     card:         el("div", "bidder-card"),
     name:         el("span", "bidder-name"),
     badges: {
-      commit:     el("span", "phase-badge", "COMMIT"),
-      prove:      el("span", "phase-badge", "PROVE"),
-      reveal:     el("span", "phase-badge", "REVEAL"),
+      commit:     phaseBadge("COMMIT"),
+      prove:      phaseBadge("PROVE"),
+      reveal:     phaseBadge("REVEAL"),
     },
     hash:         el("div", "bidder-commitment-hash"),
     status:       el("div", ""),
@@ -801,17 +837,29 @@ function createBidderCard(bidderId) {
   view.revealButton.addEventListener("click", () => revealBid(bidderId));
   view.receiptButton.id = `btn-receipt-${bidderId}`;
   view.receiptButton.title = "Lets you reveal even if this page is closed or reloaded";
+  view.receiptButton.setAttribute("aria-label", "Save receipt"); // not "floppy disk, save…"
   view.receiptButton.addEventListener("click", () => downloadReceipt(bidderId));
+  // Enter commits, as in a form.
+  view.bidInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") commitBid(bidderId);
+  });
   view.bidForm.append(view.bidInput, view.commitButton);
   view.error.id = `bidder-error-${bidderId}`;
   view.error.setAttribute("role", "alert");  // announced by screen readers
   view.error.hidden = true;
   view.bidInput.setAttribute("aria-describedby", view.error.id);
 
+  // A group named after the bidder: a screen reader says whose Commit
+  // button it is, as the card's layout shows.
+  view.name.id = `bidder-name-${bidderId}`;
+  view.card.setAttribute("role", "group");
+  view.card.setAttribute("aria-labelledby", view.name.id);
+  const avatar = el("div", "bidder-avatar", "👤");
+  avatar.setAttribute("aria-hidden", "true");
   const name = el("div", "bidder-card-name");
-  name.append(el("div", "bidder-avatar", "👤"), view.name);
+  name.append(avatar, view.name);
   const phases = el("div", "bidder-phases");
-  phases.append(view.badges.commit, view.badges.prove, view.badges.reveal);
+  phases.append(view.badges.commit.badge, view.badges.prove.badge, view.badges.reveal.badge);
   view.card.append(name, phases, view.hash, view.status, view.winner, view.actions, view.error);
   return view;
 }
@@ -864,6 +912,9 @@ function stepActions(view, b, state) {
     view.bidInput.min = state.min_bid;
     view.bidInput.max = state.max_bid;
     view.bidInput.placeholder = `${state.min_bid}–${state.max_bid}`;
+    view.bidInput.setAttribute(
+      "aria-label", `${b.name}'s bid, from ${fmtBid(state.min_bid)} to ${fmtBid(state.max_bid)}`,
+    );
     return [view.bidForm];
   }
   if (state.state === "committed") {
@@ -892,9 +943,15 @@ function updateBidderCard(view, b, state) {
   view.card.className = cardClass;
   view.name.textContent = b.name;
 
-  view.badges.commit.className = `phase-badge ${hasCommitted ? "done commit" : ""}`;
-  view.badges.prove.className  = `phase-badge ${hasProved ? (b.proof_valid ? "done prove" : "invalid") : ""}`;
-  view.badges.reveal.className = `phase-badge ${hasRevealed ? (b.commitment_verified ? "done reveal" : "invalid") : ""}`;
+  // Each badge says done, invalid or not yet: in colour, and in words for
+  // screen readers.
+  const setBadge = ({ badge, state }, step, done, valid = true) => {
+    badge.className = `phase-badge ${done ? (valid ? `done ${step}` : "invalid") : ""}`;
+    state.textContent = done ? (valid ? ": done" : ": invalid") : ": not yet";
+  };
+  setBadge(view.badges.commit, "commit", hasCommitted);
+  setBadge(view.badges.prove, "prove", hasProved, b.proof_valid);
+  setBadge(view.badges.reveal, "reveal", hasRevealed, b.commitment_verified);
 
   view.hash.textContent = hasCommitted ? `C: ${truncHex(b.commitment_hex)}` : "";
   view.hash.hidden = !hasCommitted;
@@ -1067,14 +1124,37 @@ function clearLog() {
 // Winner modal
 // ---------------------------------------------------------------------------
 
+// A native <dialog>, opened modally: the browser keeps the keyboard focus
+// inside it, makes the page behind it inert, and closes it on Escape.
+
+// What had the focus before the dialog opened, to give it back afterwards.
+let focusBeforeWinner = null;
+
 function showWinnerModal(winner) {
   document.getElementById("winner-name").textContent = winner.name;
   document.getElementById("winner-bid").textContent  = fmtBid(winner.bid);
-  document.getElementById("winner-overlay").hidden = false;
+  const dialog = document.getElementById("winner-modal");
+  if (dialog.open) return;
+  focusBeforeWinner = document.activeElement;
+  dialog.showModal();
 }
 
 function closeWinnerModal() {
-  document.getElementById("winner-overlay").hidden = true;
+  const dialog = document.getElementById("winner-modal");
+  if (dialog.open) dialog.close(); // fires "close", see wireUp
+}
+
+/**
+ * Return the focus where it was, however the dialog was closed (button or
+ * Escape). Often that element is gone: the auction's end removes the button
+ * that was pressed. The focus then goes to the actions panel, which holds the
+ * result, rather than back to the top of the page.
+ */
+function onWinnerClosed() {
+  const before = focusBeforeWinner;
+  focusBeforeWinner = null;
+  if (before?.isConnected && before !== document.body) before.focus();
+  else document.getElementById("actions-content").focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -1114,7 +1194,7 @@ async function resetAuction() {
   document.getElementById("phase-indicator").hidden = true;
   document.getElementById("setup-panel").hidden = false;
   document.getElementById("setup-error").hidden = true;
-  document.getElementById("winner-overlay").hidden = true;
+  closeWinnerModal();
   clearLog();
 }
 
@@ -1330,6 +1410,7 @@ function wireUp() {
   on("btn-clear-log", "click", clearLog);
   on("btn-reset", "click", resetAuction);
   on("btn-close-winner", "click", closeWinnerModal);
+  on("winner-modal", "close", onWinnerClosed);
 }
 
 wireUp();

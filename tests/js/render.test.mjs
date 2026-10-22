@@ -198,22 +198,42 @@ test("a bidder who missed a deadline is shown as out, and progress counts the ot
   assert.ok(panel.includes(`closes at <strong>${closes}</strong>`), panel);
 });
 
-test("the phase indicator lights the phase in progress", () => {
-  const pills = ["commit", "prove", "reveal", "finished"].map((phase) => ({
-    dataset: { phase },
-    active: false,
-    classList: { toggle(name, on) { if (name === "active") this.owner.active = on; } },
-  }));
-  for (const pill of pills) pill.classList.owner = pill;
-  const { app } = loadApp({ querySelectorAll: () => pills });
+test("the phase indicator lights the phase in progress, for screen readers too", () => {
+  const { app, document } = loadApp();
+  const pills = ["commit", "prove", "reveal", "finished"].map((phase) => {
+    const pill = document.createElement("div");
+    pill.dataset.phase = phase;
+    return pill;
+  });
+  document.querySelectorAll = () => pills;
 
   // Each server state names what is complete; the pill shows what comes next.
   const expected = { open: "commit", committed: "prove", proved: "reveal", finished: "finished" };
   for (const [state, phase] of Object.entries(expected)) {
     app.renderPhaseIndicator(auctionState({ state }));
-    const lit = pills.filter((p) => p.active).map((p) => p.dataset.phase);
+    const lit = pills.filter((p) => p.classList.contains("active")).map((p) => p.dataset.phase);
     assert.deepEqual(lit, [phase], `state "${state}"`);
+    const current = pills.filter((p) => p.getAttribute("aria-current") === "step");
+    assert.deepEqual(current.map((p) => p.dataset.phase), [phase], `aria-current in "${state}"`);
   }
+});
+
+test("a card says in words what its colours show", () => {
+  const { app, document } = loadApp();
+  const state = auctionState({
+    state: "proved",
+    bidders: [bidder("bidder_0", "Alice", { commitment_hex: "02" + "aa".repeat(32), proof_valid: false })],
+  });
+  app.renderBidderCards(state);
+  const card = document.getElementById("bidder-cards").firstElementChild;
+  // A group named after the bidder, so its buttons are hers to a screen reader.
+  assert.equal(card.getAttribute("role"), "group");
+  assert.equal(document.getElementById(card.getAttribute("aria-labelledby")).textContent, "Alice");
+  const badges = [...card.descendants()].filter((n) => n.className.startsWith("phase-badge"));
+  assert.deepEqual(
+    badges.map((badge) => badge.textContent),
+    ["COMMIT: done", "PROVE: invalid", "REVEAL: not yet"],
+  );
 });
 
 test("nothing the script builds would be blocked by the page's CSP", () => {

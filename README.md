@@ -175,6 +175,23 @@ The frontend tests need Node 22+ and no `npm install`. `pytest` also runs
 `tests/test_browser_interop.py`, which drives the browser's crypto module with
 Node; without Node those tests are skipped, unless `REQUIRE_NODE=1` (as in CI).
 
+### Accessibility
+
+- **Keyboard**: every control is a native button or input with a visible focus
+  ring, and Enter commits a bid. The winner is shown in a native modal
+  `<dialog>`: focus stays inside it, Escape closes it, and focus then returns
+  to where it was (or to the result, if that is gone).
+- **Screen readers**: the protocol logs are live regions, phase changes are
+  announced, each bidder's card is a group named after them, and what colours
+  show on screen (a phase badge's state, the current phase) is also said in
+  words. Decorative symbols are hidden from them.
+- **Contrast and motion**: all text has at least 4.5:1 contrast (WCAG AA) on
+  every background, which `tests/test_accessibility.py` checks from the
+  stylesheet; animations stop for anyone who asks their system for less motion.
+
+An axe-core audit in Chrome finds no violations on the setup page, a bidder's
+page, or a finished auction with the winner dialog open.
+
 Known, not-yet-fixed bugs are recorded as tests that assert the correct
 behaviour, marked `@known_bug(...)` (a strict `xfail`, see `tests/support.py`).
 They show up as `XFAIL` with their reason; the commit that fixes a bug
@@ -226,6 +243,7 @@ crypto-auction/
 │   ├── test_store.py         # SQLite storage: round trips, restarts, concurrent requests
 │   ├── test_api.py           # REST API via Flask's test client
 │   ├── test_web_security.py  # Security headers, CSP, no inline code in the page
+│   ├── test_accessibility.py # Labels, landmarks, live regions, text contrast
 │   ├── test_browser_interop.py  # Server accepts what the browser produces (needs Node)
 │   └── test_app.py           # Server entry point (debug mode)
 ├── pyproject.toml            # Package metadata and tool configuration

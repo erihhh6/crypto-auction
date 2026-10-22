@@ -5,6 +5,7 @@
 
 /* ---- Custom properties ---- */
 :root {
+  /* Phase colours, for borders, fills and buttons with white text. */
   --color-commit:  #2563eb;
   --color-prove:   #7c3aed;
   --color-reveal:  #dc2626;
@@ -15,9 +16,18 @@
   --bg-raised:     #273449;
   --bg-input:      #0f172a;
 
+  /* Text colours: each has at least 4.5:1 contrast (WCAG AA) on every
+     background above, so they are what text uses; the phase colours as text
+     fall to 2.2:1. The tinted ones are the phase colours lightened just
+     enough. */
   --text-primary:  #f1f5f9;
   --text-muted:    #94a3b8;
-  --text-dim:      #64748b;
+  --text-dim:      #919cad;
+  --text-commit:   #719af2;
+  --text-prove:    #af87f4;
+  --text-reveal:   #ea7b7b;
+  --text-finish:   #de8724;
+  --text-danger:   #f37575;
 
   --border:        #334155;
   --border-subtle: #1e293b;
@@ -37,6 +47,34 @@
 
 /* The hidden attribute must win over the display of classes such as .bidder-winner-badge. */
 [hidden] { display: none !important; }
+
+/* ---- Accessibility ---- */
+/* Whatever has the keyboard focus shows it, clearly, on every background. */
+:focus-visible {
+  outline: 2px solid var(--text-commit);
+  outline-offset: 2px;
+}
+
+/* Read by screen readers, not shown: what colour alone says on screen. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* No pulsing or sliding for whoever asks their system for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 
 html { font-size: 14px; }
 
@@ -120,10 +158,10 @@ header {
   border-color: currentColor;
 }
 
-.phase-pill[data-phase="commit"].active  { color: var(--color-commit);  background: rgba(37,99,235,.15); }
-.phase-pill[data-phase="prove"].active   { color: var(--color-prove);   background: rgba(124,58,237,.15); }
-.phase-pill[data-phase="reveal"].active  { color: var(--color-reveal);  background: rgba(220,38,38,.15); }
-.phase-pill[data-phase="finished"].active{ color: var(--color-finish);  background: rgba(217,119,6,.15); }
+.phase-pill[data-phase="commit"].active  { color: var(--text-commit);  background: rgba(37,99,235,.15); }
+.phase-pill[data-phase="prove"].active   { color: var(--text-prove);   background: rgba(124,58,237,.15); }
+.phase-pill[data-phase="reveal"].active  { color: var(--text-reveal);  background: rgba(220,38,38,.15); }
+.phase-pill[data-phase="finished"].active{ color: var(--text-finish);  background: rgba(217,119,6,.15); }
 
 .pill-dot {
   width: 7px;
@@ -200,7 +238,6 @@ input[type="number"] {
   padding: 8px 12px;
   font-size: 13px;
   width: 100%;
-  outline: none;
   transition: border-color 0.2s;
 }
 input[type="text"]:focus,
@@ -231,7 +268,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   font-size: 13px;
   transition: all 0.2s;
 }
-.btn-remove-bidder:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--red); }
+.btn-remove-bidder:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--text-danger); }
 
 #btn-add-bidder {
   background: transparent;
@@ -245,7 +282,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   margin-top: 4px;
   transition: all 0.2s;
 }
-#btn-add-bidder:hover { border-color: var(--color-commit); color: var(--color-commit); }
+#btn-add-bidder:hover { border-color: var(--color-commit); color: var(--text-commit); }
 
 .setup-buttons {
   display: flex;
@@ -256,7 +293,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   background: var(--bg-raised);
   border: 1px solid var(--color-prove);
   border-radius: var(--radius-md);
-  color: var(--color-prove);
+  color: var(--text-prove);
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
@@ -276,14 +313,14 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   justify-content: space-between;
   padding: 8px 24px;
   font-size: 13px;
-  color: var(--color-prove);
+  color: var(--text-prove);
   font-weight: 600;
 }
 #demo-banner button {
   background: rgba(124,58,237,.2);
   border: 1px solid var(--color-prove);
   border-radius: var(--radius-sm);
-  color: var(--color-prove);
+  color: var(--text-prove);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -317,7 +354,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   background: rgba(239,68,68,.1);
   border: 1px solid rgba(239,68,68,.3);
   border-radius: var(--radius-sm);
-  color: var(--red);
+  color: var(--text-danger);
   font-size: 13px;
   margin-top: 12px;
   padding: 10px 14px;
@@ -426,10 +463,10 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   transition: all 0.3s ease;
 }
 
-.phase-badge.done.commit  { background: rgba(37,99,235,.2);   border-color: var(--color-commit); color: var(--color-commit); }
-.phase-badge.done.prove   { background: rgba(124,58,237,.2);  border-color: var(--color-prove);  color: var(--color-prove); }
-.phase-badge.done.reveal  { background: rgba(220,38,38,.2);   border-color: var(--color-reveal); color: var(--color-reveal); }
-.phase-badge.invalid      { background: rgba(239,68,68,.15);  border-color: var(--red); color: var(--red); }
+.phase-badge.done.commit  { background: rgba(37,99,235,.2);   border-color: var(--color-commit); color: var(--text-commit); }
+.phase-badge.done.prove   { background: rgba(124,58,237,.2);  border-color: var(--color-prove);  color: var(--text-prove); }
+.phase-badge.done.reveal  { background: rgba(220,38,38,.2);   border-color: var(--color-reveal); color: var(--text-reveal); }
+.phase-badge.invalid      { background: rgba(239,68,68,.15);  border-color: var(--red); color: var(--text-danger); }
 
 .bidder-commitment-hash {
   font-family: monospace;
@@ -448,7 +485,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 
 .bidder-revealed-pending {
   font-size: 11px;
-  color: var(--color-reveal);
+  color: var(--text-reveal);
   margin-bottom: 8px;
 }
 
@@ -462,13 +499,13 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 
 .bidder-cheater {
   font-size: 12px;
-  color: var(--red);
+  color: var(--text-danger);
   margin-bottom: 6px;
 }
 
 .bidder-note        { font-size: 11px; }
-.bidder-note.commit { color: var(--color-commit); }
-.bidder-note.prove  { color: var(--color-prove); }
+.bidder-note.commit { color: var(--text-commit); }
+.bidder-note.prove  { color: var(--text-prove); }
 .bidder-note.dim    { font-size: 10px; color: var(--text-dim); flex-basis: 100%; }
 
 .bidder-winner-badge {
@@ -523,7 +560,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 .btn-reveal:hover:not(:disabled)  { background: #b91c1c; }
 
 .btn-reset   { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); }
-.btn-reset:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--red); }
+.btn-reset:hover { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--text-danger); }
 
 .btn-clear-log { background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; padding: 3px 8px; }
 .btn-clear-log:hover { color: var(--text-muted); }
@@ -637,12 +674,12 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 .btn-copy { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); padding: 5px 10px; }
 .btn-copy:hover { color: var(--text-primary); }
 
-/* A phase's colour, as --tone, for its title and progress bar. */
-.tone-commit { --tone: var(--color-commit); }
-.tone-prove  { --tone: var(--color-prove); }
-.tone-reveal { --tone: var(--color-reveal); }
-.tone-finish { --tone: var(--color-finish); }
-.phase-title { color: var(--tone); }
+/* A phase's colour: --tone for its progress bar, --tone-text for its title. */
+.tone-commit { --tone: var(--color-commit); --tone-text: var(--text-commit); }
+.tone-prove  { --tone: var(--color-prove);  --tone-text: var(--text-prove); }
+.tone-reveal { --tone: var(--color-reveal); --tone-text: var(--text-reveal); }
+.tone-finish { --tone: var(--color-finish); --tone-text: var(--text-finish); }
+.phase-title { color: var(--tone-text); }
 
 .progress {
   appearance: none;
@@ -671,7 +708,7 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 1100;  /* above the winner modal */
+  z-index: 1100;  /* above the page (the winner dialog is above all, in the top layer) */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -709,25 +746,23 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 .bidder-error {
   margin-top: 8px;
   font-size: 12px;
-  color: var(--red);
+  color: var(--text-danger);
 }
 
 /* =====================================================================
    WINNER MODAL
    ===================================================================== */
-#winner-overlay {
-  position: fixed;
-  inset: 0;
+/* A native <dialog>, opened with showModal(): the browser centres it, keeps
+   the focus inside it and makes the rest of the page inert while it is open. */
+#winner-modal::backdrop {
   background: rgba(0,0,0,.75);
   backdrop-filter: blur(4px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 #winner-modal {
+  margin: auto;
   background: var(--bg-surface);
+  color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 48px 40px;

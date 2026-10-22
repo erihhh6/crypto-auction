@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CryptoAuction — Sealed Bid Demo</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
   <!--
@@ -17,24 +18,24 @@
   <header>
     <div class="header-inner">
       <div class="header-brand">
-        <span class="brand-icon">🔐</span>
+        <span class="brand-icon" aria-hidden="true">🔐</span>
         <h1>CryptoAuction</h1>
         <span class="brand-sub">Sealed-Bid Cryptographic Protocol</span>
       </div>
-      <div id="phase-indicator" class="phase-indicator" hidden>
-        <div class="phase-pill" data-phase="commit">
+      <div id="phase-indicator" class="phase-indicator" role="list" aria-label="Auction phases" hidden>
+        <div class="phase-pill" role="listitem" data-phase="commit">
           <span class="pill-dot"></span>COMMIT
         </div>
-        <div class="phase-arrow">→</div>
-        <div class="phase-pill" data-phase="prove">
+        <div class="phase-arrow" aria-hidden="true">→</div>
+        <div class="phase-pill" role="listitem" data-phase="prove">
           <span class="pill-dot"></span>ZK PROVE
         </div>
-        <div class="phase-arrow">→</div>
-        <div class="phase-pill" data-phase="reveal">
+        <div class="phase-arrow" aria-hidden="true">→</div>
+        <div class="phase-pill" role="listitem" data-phase="reveal">
           <span class="pill-dot"></span>REVEAL
         </div>
-        <div class="phase-arrow">→</div>
-        <div class="phase-pill" data-phase="finished">
+        <div class="phase-arrow" aria-hidden="true">→</div>
+        <div class="phase-pill" role="listitem" data-phase="finished">
           <span class="pill-dot"></span>FINISHED
         </div>
       </div>
@@ -42,7 +43,8 @@
   </header>
 
   <!-- ===== SETUP PANEL ===== -->
-  <section id="setup-panel" class="setup-panel">
+  <!-- A <main> like the auction view: only one of the two is ever shown. -->
+  <main id="setup-panel" class="setup-panel">
     <div class="setup-card">
       <h2>Configure Auction</h2>
       <p class="setup-desc">
@@ -65,18 +67,21 @@
       </div>
 
       <div class="bidders-setup">
-        <label>Bidders</label>
-        <div id="bidder-inputs">
+        <label id="bidders-label">Bidders</label>
+        <div id="bidder-inputs" role="group" aria-labelledby="bidders-label">
           <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Alice" />
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Alice"
+                   aria-label="Bidder name" />
             <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
           </div>
           <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Bob" />
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Bob"
+                   aria-label="Bidder name" />
             <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
           </div>
           <div class="bidder-input-row">
-            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Carol" />
+            <input type="text" class="bidder-name-input" placeholder="Bidder name" value="Carol"
+                   aria-label="Bidder name" />
             <button class="btn-remove-bidder" aria-label="Remove bidder">✕</button>
           </div>
         </div>
@@ -87,7 +92,7 @@
         <button id="btn-create">Start Auction →</button>
         <button id="btn-demo">▶ Watch Demo</button>
       </div>
-      <div id="setup-error" class="error-msg" hidden></div>
+      <div id="setup-error" class="error-msg" role="alert" hidden></div>
 
       <div class="resume">
         <label for="receipt-file">
@@ -97,11 +102,11 @@
         <input id="receipt-file" type="file" accept=".json,application/json" />
       </div>
     </div>
-  </section>
+  </main>
 
   <!-- ===== DEMO BANNER ===== -->
   <div id="demo-banner" hidden>
-    <span id="demo-status-text">Demo running…</span>
+    <span id="demo-status-text" role="status">Demo running…</span>
     <button id="btn-stop-demo">■ Stop Demo</button>
   </div>
 
@@ -128,14 +133,14 @@
         <div class="log-section-title public-title">
           <span class="log-dot public-dot"></span>Public — visible to all
         </div>
-        <div id="public-log"></div>
+        <div id="public-log" role="log" aria-label="Public protocol log"></div>
       </div>
 
       <div class="log-section">
         <div class="log-section-title private-title">
           <span class="log-dot private-dot"></span>Private — bidder only
         </div>
-        <div id="private-log"></div>
+        <div id="private-log" role="log" aria-label="Private protocol log"></div>
       </div>
     </section>
 
@@ -145,30 +150,32 @@
         <h2>Actions</h2>
         <button id="btn-reset" class="btn-reset">Reset</button>
       </div>
-      <div id="actions-content"></div>
+      <!-- Focusable from script only (tabindex -1): where focus goes after the winner dialog -->
+      <div id="actions-content" tabindex="-1"></div>
       <!-- On the organizer's page: each bidder's join link (app.js renderJoinLinks) -->
       <div id="join-links" class="action-section join-links" hidden></div>
     </section>
 
   </main>
 
-  <!-- ===== WINNER MODAL ===== -->
-  <div id="winner-overlay" hidden>
-    <div id="winner-modal">
-      <div class="winner-trophy">🏆</div>
-      <h2>Auction Complete!</h2>
-      <div id="winner-name" class="winner-name"></div>
-      <div id="winner-bid" class="winner-bid"></div>
-      <p class="winner-desc">
-        Bid verified against cryptographic commitment.<br/>
-        Result is publicly auditable.
-      </p>
-      <button id="btn-close-winner">Close</button>
-    </div>
-  </div>
+  <!-- ===== WINNER DIALOG: a native modal <dialog> (app.js showWinnerModal) ===== -->
+  <dialog id="winner-modal" aria-labelledby="winner-title">
+    <div class="winner-trophy" aria-hidden="true">🏆</div>
+    <h2 id="winner-title">Auction Complete!</h2>
+    <div id="winner-name" class="winner-name"></div>
+    <div id="winner-bid" class="winner-bid"></div>
+    <p class="winner-desc">
+      Bid verified against cryptographic commitment.<br/>
+      Result is publicly auditable.
+    </p>
+    <button id="btn-close-winner">Close</button>
+  </dialog>
 
   <!-- ===== TOASTS: problems that concern the whole page (app.js showToast) ===== -->
   <div id="toasts" class="toasts"></div>
+
+  <!-- Read out by screen readers: what changes without the reader's doing (app.js announce) -->
+  <div id="announcer" class="sr-only" role="status"></div>
 
   <!-- Bidder-side cryptography (commitments and range proofs); sets window.auctionCrypto. -->
   <script type="module" src="/static/auction-crypto.js"></script>

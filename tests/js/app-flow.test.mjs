@@ -296,14 +296,71 @@ test("whoever's reveal ends the auction, every page shows the winner", async () 
   const { app, state, document } = loadApp();
   state.state = "proved";
   await app.refreshState();
-  assert.equal(document.getElementById("winner-overlay").hidden, true);
+  const dialog = document.getElementById("winner-modal");
+  assert.equal(dialog.open, false);
 
   // Bob revealed last, on his own device; this page learns it from a poll.
   state.state = "finished";
   state.winner = { bidder_id: "bidder_1", name: "Bob", bid: 1800 };
   await app.refreshState();
-  assert.equal(document.getElementById("winner-overlay").hidden, false);
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.modal, true, "modal: the focus stays in it, the page behind is inert");
   assert.equal(document.getElementById("winner-name").textContent, "Bob");
+});
+
+test("closing the winner dialog gives the focus back where it was", async () => {
+  const { app, state, document } = loadApp();
+  await app.refreshState();
+  const clearLog = document.getElementById("btn-clear-log"); // still there at the end
+  clearLog.focus();
+
+  state.state = "finished";
+  state.winner = { bidder_id: "bidder_1", name: "Bob", bid: 1800 };
+  await app.refreshState();
+  const close = document.getElementById("btn-close-winner");
+  close.focus(); // as showModal() does
+  await close.click();
+  assert.equal(document.getElementById("winner-modal").open, false);
+  assert.equal(document.activeElement, clearLog);
+});
+
+test("if that place is gone, the focus goes to the result, not the top of the page", async () => {
+  const { app, state, document } = loadApp();
+  await app.refreshState();
+  document.getElementById("bid-input-bidder_0").focus(); // gone once the auction ends
+
+  state.state = "finished";
+  state.winner = { bidder_id: "bidder_1", name: "Bob", bid: 1800 };
+  await app.refreshState();
+  await document.getElementById("btn-close-winner").click();
+  assert.equal(document.activeElement, document.getElementById("actions-content"));
+});
+
+test("screen readers hear when the auction moves to another phase", async () => {
+  const { app, state, document } = loadApp();
+  const heard = () => document.getElementById("announcer").textContent;
+  await app.refreshState();
+  assert.equal(heard(), "", "nothing has changed yet");
+
+  state.state = "committed";
+  await app.refreshState();
+  assert.equal(heard(), "The commit phase is over: bidders now prove that their bids are in range.");
+  state.state = "finished";
+  state.winner = null;
+  await app.refreshState();
+  assert.equal(heard(), "The auction is over, with no winner.");
+});
+
+test("Enter in a bid field commits the bid", async () => {
+  const { app, document, requests } = loadApp();
+  await app.refreshState();
+  const input = document.getElementById("bid-input-bidder_0");
+  input.value = "1500";
+  const [onKey] = input.listeners.keydown;
+  await onKey({ key: "a" });
+  assert.equal(requests.filter((r) => r.path.endsWith("/commit")).length, 0);
+  await onKey({ key: "Enter" });
+  assert.equal(requests.filter((r) => r.path.endsWith("/commit")).length, 1);
 });
 
 test("the organizer's page lists each bidder's join link, to copy and send", async () => {

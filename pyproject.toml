@@ -30,6 +30,7 @@ where = ["src"]
     "templates/*.html",
     "static/*.js",
     "static/*.css",
+    "static/*.svg",
     "static/vendor/*",
 ]
 

@@ -56,6 +56,7 @@ export class FakeElement {
     this.value = "";
     this.disabled = false;
     this.hidden = false;
+    this.open = false;
     this.title = "";
     this.listeners = {};
     this.attributes = new Map();
@@ -127,6 +128,9 @@ export class FakeElement {
     for (let n = node; n; n = n.parentNode) if (n === this) return true;
     return false;
   }
+  get isConnected() {
+    return this.ownerDocument.body.contains(this);
+  }
   *descendants() {
     for (const child of this.children) {
       yield child;
@@ -140,6 +144,24 @@ export class FakeElement {
   }
   getAttribute(name) {
     return this.attributes.get(name) ?? null;
+  }
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
+  // A <dialog>: closing it fires "close", as the browser's does. `modal`
+  // tells showModal() (focus trapped, page inert) from show() (neither).
+  show() {
+    this.open = true;
+    this.modal = false;
+  }
+  showModal() {
+    this.open = true;
+    this.modal = true;
+  }
+  close() {
+    this.open = false;
+    for (const listener of this.listeners.close ?? []) listener();
   }
 
   addEventListener(type, listener) {
