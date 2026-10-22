@@ -31,7 +31,7 @@ function fakeElement() {
   };
 }
 
-function loadApp() {
+function loadApp(overrides = {}) {
   const elements = new Map();
   const document = {
     getElementById(id) {
@@ -40,6 +40,7 @@ function loadApp() {
     },
     createElement: () => fakeElement(),
     querySelectorAll: () => [],
+    ...overrides,
   };
   const app = vm.createContext({ document, console });
   vm.runInContext(APP_JS, app);
@@ -149,6 +150,24 @@ test("a bidder who missed a deadline is shown as out, and progress counts the ot
   // The prove deadline, in the viewer's time zone.
   const closes = new Date(DEADLINES.prove).toLocaleTimeString("en-GB");
   assert.ok(panel.includes(`closes at <strong>${closes}</strong>`), panel);
+});
+
+test("the phase indicator lights the phase in progress", () => {
+  const pills = ["commit", "prove", "reveal", "finished"].map((phase) => ({
+    dataset: { phase },
+    active: false,
+    classList: { toggle(name, on) { if (name === "active") this.owner.active = on; } },
+  }));
+  for (const pill of pills) pill.classList.owner = pill;
+  const { app } = loadApp({ querySelectorAll: () => pills });
+
+  // Each server state names what is complete; the pill shows what comes next.
+  const expected = { open: "commit", committed: "prove", proved: "reveal", finished: "finished" };
+  for (const [state, phase] of Object.entries(expected)) {
+    app.renderPhaseIndicator(auctionState({ state }));
+    const lit = pills.filter((p) => p.active).map((p) => p.dataset.phase);
+    assert.deepEqual(lit, [phase], `state "${state}"`);
+  }
 });
 
 test("proof summary reads the range proof format the API returns", () => {

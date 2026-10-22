@@ -393,16 +393,11 @@ function renderAll(state) {
 // Phase indicator
 // ---------------------------------------------------------------------------
 
-const PHASE_PILL_MAP = {
-  open:      "commit",
-  committed: "commit",
-  proved:    "prove",
-  finished:  "finished",
-};
-
+// A state names what is complete ("committed": every commitment is in), the
+// pill what happens now (proving), so the pill comes from PHASE_STEP.
 function renderPhaseIndicator(state) {
   const pills = document.querySelectorAll(".phase-pill");
-  const activePill = PHASE_PILL_MAP[state.state] || "commit";
+  const activePill = PHASE_STEP[state.state] ?? "finished";
   pills.forEach(pill => {
     pill.classList.toggle("active", pill.dataset.phase === activePill);
   });
