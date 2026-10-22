@@ -52,6 +52,7 @@ function loadApp() {
   const requests = [];
   const cryptoCalls = [];
   const alerts = [];
+  const timers = [];
   const state = {
     success: true,
     auction_id: CREATED.auction_id,
@@ -59,6 +60,12 @@ function loadApp() {
     item_name: "x",
     min_bid: 100,
     max_bid: 5000,
+    server_time: "2027-01-15T08:00:00.000+00:00",
+    deadlines: {
+      commit: "2027-01-15T08:10:00.000+00:00",
+      prove: "2027-01-15T08:20:00.000+00:00",
+      reveal: "2027-01-15T08:30:00.000+00:00",
+    },
     winner: null,
     bidders: CREATED.bidders.map(({ bidder_id, name }) => ({ bidder_id, name, commitment_hex: null })),
   };
@@ -71,6 +78,9 @@ function loadApp() {
   const context = vm.createContext({
     console,
     alert: (message) => alerts.push(message),
+    // Recorded, never run: the tests decide what time it is.
+    setTimeout: (callback, delay) => timers.push({ callback, delay }),
+    clearTimeout() {},
     document: {
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, fakeElement());
@@ -102,7 +112,7 @@ function loadApp() {
   });
   vm.runInContext(APP_JS, context);
   context.rememberAuction(CREATED);
-  return { app: context, requests, cryptoCalls, alerts };
+  return { app: context, requests, cryptoCalls, alerts, timers, state };
 }
 
 const sentTo = (requests, path) => requests.filter((r) => r.path === path).map((r) => r.body);
@@ -142,6 +152,24 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
 
   // Reveal: the opening, for the first time.
   assert.deepEqual(sentTo(requests, "/api/reveal"), [{ bid: 1500, randomness_hex: BLINDING }]);
+});
+
+test("the page refreshes when the current phase's deadline passes, on the server's clock", async () => {
+  const { app, timers, state } = loadApp();
+  // Far from this computer's clock: only the server's times may matter.
+  state.state = "committed";
+  state.server_time = "2001-01-01T00:00:00.000+00:00";
+  state.deadlines = { ...state.deadlines, prove: "2001-01-01T00:01:30.000+00:00" };
+
+  await app.refreshState();
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].callback, app.refreshState);
+  assert.equal(timers[0].delay, 90_000 + 250); // just after the deadline
+
+  // Once finished, there is no deadline left to wait for.
+  state.state = "finished";
+  await app.refreshState();
+  assert.equal(timers.length, 1);
 });
 
 test("each bidder's requests carry that bidder's join token, and no others do", async () => {

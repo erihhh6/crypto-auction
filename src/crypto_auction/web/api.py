@@ -18,6 +18,11 @@ Bidders:
   act for the bidder whose token is sent as "Authorization: Bearer <token>";
   a missing or invalid token gets a 401.
 
+Deadlines:
+  Each step (commit, prove, reveal) has a window; they follow one another from
+  creation, and /api/state lists their deadlines. A bidder who misses one takes
+  no further part: later requests from them get a 400.
+
 Request rules:
   Every POST must be sent as application/json (415 otherwise) with a JSON object
   body (400 otherwise). Integers must lie in [0, 2**53 - 1]. Every error,
@@ -35,7 +40,7 @@ from flask import Blueprint, Flask, Response, abort, current_app, jsonify, reque
 from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
 
-from crypto_auction.auction import AuctionConfig
+from crypto_auction.auction import DEFAULT_PHASE_SECONDS, AuctionConfig
 from crypto_auction.pedersen import decode_scalar
 from crypto_auction.range_proof import RangeProof
 from crypto_auction.service import (
@@ -52,6 +57,10 @@ from crypto_auction.service import (
 MAX_JSON_INT = 2**53 - 1
 MAX_BIDDERS = 10
 MAX_NAME_LENGTH = 100
+# Bounds for each step's window: long enough to compute and send a proof, and
+# short enough that an auction does not stay open indefinitely.
+MIN_PHASE_SECONDS = 10
+MAX_PHASE_SECONDS = 7 * 24 * 60 * 60
 
 # Key under which create_app() stores each app's AuctionService.
 SERVICE_KEY = "crypto_auction"
@@ -169,6 +178,16 @@ def _int_field(data: dict[str, Any], name: str) -> int:
     return value
 
 
+def _phase_seconds(data: dict[str, Any], name: str) -> int:
+    """An optional window length in seconds, within the bounds above."""
+    if name not in data:
+        return DEFAULT_PHASE_SECONDS
+    value = _int_field(data, name)
+    if not MIN_PHASE_SECONDS <= value <= MAX_PHASE_SECONDS:
+        _bad_request(f"'{name}' must be between {MIN_PHASE_SECONDS} and {MAX_PHASE_SECONDS}.")
+    return value
+
+
 def _str_field(data: dict[str, Any], name: str) -> str:
     value = _field(data, name)
     if not isinstance(value, str):
@@ -227,10 +246,13 @@ def create_auction() -> ResponseReturnValue:
 
     Body JSON:
       {
-        "item_name": str,
-        "min_bid":   int,
-        "max_bid":   int,
-        "bidders":   [str, ...]   -- list of bidder display names
+        "item_name":      str,
+        "min_bid":        int,
+        "max_bid":        int,
+        "bidders":        [str, ...],  -- list of bidder display names
+        "commit_seconds": int,         -- optional, each window 600 s by default;
+        "prove_seconds":  int,         -- the windows follow one another from
+        "reveal_seconds": int          -- now, so all deadlines are fixed here
       }
 
     Response:
@@ -269,6 +291,9 @@ def create_auction() -> ResponseReturnValue:
         max_bid=max_bid,
         item_name=item_name,
         bidder_names=tuple(bidder_names),
+        commit_seconds=_phase_seconds(data, "commit_seconds"),
+        prove_seconds=_phase_seconds(data, "prove_seconds"),
+        reveal_seconds=_phase_seconds(data, "reveal_seconds"),
     )
     auction, join_tokens = _service().create(config)
 

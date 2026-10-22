@@ -13,3 +13,18 @@ def known_bug(reason, *, raises=AssertionError):
     remove this marker.
     """
     return pytest.mark.xfail(reason=reason, raises=raises, strict=True)
+
+
+class FakeClock:
+    """A clock for deadline tests: it stands still until the test moves it."""
+
+    START = 1_800_000_000.0  # 2027-01-15 08:00:00 UTC
+
+    def __init__(self):
+        self.now = self.START
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds

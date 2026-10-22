@@ -6,11 +6,18 @@ Implements a sealed-bid auction with a 3-phase cryptographic protocol:
 
   OPEN → COMMITTED → PROVED → FINISHED
 
-State transitions:
-  OPEN      → COMMITTED : all bidders have submitted Pedersen commitments
-  COMMITTED → PROVED    : all bidders have submitted a range proof (valid or not)
-  PROVED    → FINISHED  : all bidders have revealed (bid, blinding); the winner
-                          is determined from the verified reveals
+State transitions (each also happens at the phase's deadline, see below):
+  OPEN      → COMMITTED : every bidder still taking part has submitted a
+                          Pedersen commitment
+  COMMITTED → PROVED    : ... has submitted a range proof (valid or not)
+  PROVED    → FINISHED  : ... has revealed (bid, blinding); the winner is
+                          determined from the verified reveals
+
+Deadlines: the commit, prove and reveal windows follow one another from the
+moment the auction is created, so every deadline is known up front. A bidder
+who has not taken a phase's step by its deadline misses it: they take no
+further part and cannot win, and the auction carries on without them. A
+bidder who stays silent therefore cannot stall the auction.
 
 Bidders prove who they are with a secret join token, issued when the auction
 is created (issue_join_tokens, authenticate).
@@ -23,9 +30,12 @@ compute both themselves), and learns actual bid values only in phase 3.
 import hashlib
 import hmac
 import secrets
+import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, TypeAlias
 
 from crypto_auction.pedersen import N, decode_point, encode_scalar
 from crypto_auction.pedersen import verify as verify_opening
@@ -33,6 +43,12 @@ from crypto_auction.range_proof import RangeProof, verify_range
 from crypto_auction.transcript import encode_parts
 
 _PROOF_DOMAIN = b"crypto-auction/bid-range-proof/v1"
+
+# How long each window stays open unless the auction is configured otherwise.
+DEFAULT_PHASE_SECONDS = 600
+
+# Returns the current time as a Unix timestamp; time.time unless injected.
+Clock: TypeAlias = Callable[[], float]
 
 
 def bid_proof_context(auction_id: str, bidder_id: str) -> bytes:
@@ -51,6 +67,11 @@ def _token_digest(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 
 
+def _timestamp(unix_time: float) -> str:
+    """ISO 8601 in UTC, as the public state gives times."""
+    return datetime.fromtimestamp(unix_time, UTC).isoformat(timespec="milliseconds")
+
+
 class AuctionState(Enum):
     OPEN = "open"
     COMMITTED = "committed"
@@ -67,6 +88,9 @@ class BidderState:
     # Never public. Only the join token's digest is kept, so this state never
     # holds a usable token.
     token_digest: bytes | None = None
+    # The step ("commit", "prove" or "reveal") whose deadline the bidder
+    # missed; from then on they take no part.
+    missed_deadline: str | None = None
     # Phase 1 — public after commit
     commitment_hex: str | None = None  # canonical encoding of C = bid·G + blinding·H
     commit_order: int | None = None  # 0 for the first commitment received, 1 next, ...
@@ -80,6 +104,26 @@ class BidderState:
 
 
 @dataclass(frozen=True)
+class _Phase:
+    step: str  # what bidders do in this phase; also names its deadline
+    done: Callable[[BidderState], bool]  # whether a bidder has taken the step
+    next: AuctionState
+
+
+_PHASES = {
+    AuctionState.OPEN: _Phase(
+        "commit", lambda b: b.commitment_hex is not None, AuctionState.COMMITTED
+    ),
+    AuctionState.COMMITTED: _Phase(
+        "prove", lambda b: b.proof_valid is not None, AuctionState.PROVED
+    ),
+    AuctionState.PROVED: _Phase(
+        "reveal", lambda b: b.revealed_bid is not None, AuctionState.FINISHED
+    ),
+}
+
+
+@dataclass(frozen=True)
 class AuctionConfig:
     """Immutable configuration set when the auction is created."""
 
@@ -87,6 +131,10 @@ class AuctionConfig:
     max_bid: int
     item_name: str
     bidder_names: tuple[str, ...]
+    # How long each window stays open; the windows follow one another.
+    commit_seconds: int = DEFAULT_PHASE_SECONDS
+    prove_seconds: int = DEFAULT_PHASE_SECONDS
+    reveal_seconds: int = DEFAULT_PHASE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -125,13 +173,20 @@ class Auction:
     """
     Manages the full lifecycle of a sealed-bid cryptographic auction.
 
+    Deadlines are applied lazily: every operation and query first brings the
+    auction up to date with the clock, so `state` is current as of the last
+    call rather than kept current by a timer.
+
     Attributes:
         config: Immutable auction configuration.
         state: Current phase of the auction (AuctionState).
         bidders: Ordered dict mapping bidder_id → BidderState.
+        deadlines: Unix time at which each step's window closes, keyed by
+            step ("commit", "prove", "reveal"). A step taken at or after its
+            deadline is too late.
     """
 
-    def __init__(self, config: AuctionConfig) -> None:
+    def __init__(self, config: AuctionConfig, clock: Clock = time.time) -> None:
         self.config = config
         self.state = AuctionState.OPEN
         self.bidders: dict[str, BidderState] = {}
@@ -144,6 +199,15 @@ class Auction:
         # Bound into every range proof's context, so a proof made for one
         # auction cannot be replayed in another.
         self.auction_id = secrets.token_hex(16)
+
+        self._clock = clock
+        commit_ends = clock() + config.commit_seconds
+        prove_ends = commit_ends + config.prove_seconds
+        self.deadlines = {
+            "commit": commit_ends,
+            "prove": prove_ends,
+            "reveal": prove_ends + config.reveal_seconds,
+        }
 
     def proof_context(self, bidder_id: str) -> bytes:
         """What a bidder's range proof is bound to: this auction and this bidder."""
@@ -181,6 +245,44 @@ class Auction:
         return None
 
     # ------------------------------------------------------------------
+    # Phases and deadlines
+    # ------------------------------------------------------------------
+
+    def _advance(self) -> float:
+        """
+        Bring the auction up to date with the clock; returns the time used.
+
+        A phase ends once every bidder still taking part has taken its step,
+        or at its deadline, when those who have not miss it. One call can pass
+        several phases, e.g. after a long quiet spell, or when nobody is left.
+        """
+        now = self._clock()
+        while self.state != AuctionState.FINISHED:
+            phase = _PHASES[self.state]
+            waiting = [
+                b for b in self.bidders.values() if b.missed_deadline is None and not phase.done(b)
+            ]
+            if waiting:
+                if now < self.deadlines[phase.step]:
+                    break
+                for bidder in waiting:
+                    bidder.missed_deadline = phase.step
+            self.state = phase.next
+        return now
+
+    def _participant(self, bidder_id: str) -> BidderState:
+        """The bidder, provided they are still taking part."""
+        if bidder_id not in self.bidders:
+            raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
+        bidder = self.bidders[bidder_id]
+        if bidder.missed_deadline is not None:
+            raise ValueError(
+                f"Bidder '{bidder.name}' missed the {bidder.missed_deadline} deadline "
+                "and takes no further part."
+            )
+        return bidder
+
+    # ------------------------------------------------------------------
     # Phase 1 — Commit
     # ------------------------------------------------------------------
 
@@ -188,8 +290,8 @@ class Auction:
         """
         Record a bidder's Pedersen commitment.
 
-        Allowed in states OPEN and COMMITTED (so bidders can commit asynchronously).
-        Advances to COMMITTED once all bidders have committed.
+        Allowed in state OPEN, before the commit deadline. Advances to
+        COMMITTED once every bidder has committed.
 
         Args:
             bidder_id: Identifier of the bidder submitting the commitment.
@@ -200,18 +302,14 @@ class Auction:
             The phase after this commitment, and a message for the protocol log.
 
         Raises:
-            ValueError: On invalid state, unknown bidder_id, duplicate commit, a
-                commitment that is not a canonically encoded curve point, or one
-                that another bidder already submitted.
+            ValueError: On invalid state, unknown bidder_id, a missed deadline,
+                duplicate commit, a commitment that is not a canonically encoded
+                curve point, or one that another bidder already submitted.
         """
-        if self.state not in (AuctionState.OPEN, AuctionState.COMMITTED):
-            raise ValueError(
-                f"Cannot commit in state '{self.state.value}'. Expected OPEN or COMMITTED."
-            )
-        if bidder_id not in self.bidders:
-            raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
-
-        bidder = self.bidders[bidder_id]
+        self._advance()
+        bidder = self._participant(bidder_id)
+        if self.state != AuctionState.OPEN:
+            raise ValueError(f"Cannot commit in state '{self.state.value}'. Expected OPEN.")
         if bidder.commitment_hex is not None:
             raise ValueError(
                 f"Bidder '{bidder.name}' has already committed. Double-commit is not allowed."
@@ -228,9 +326,7 @@ class Auction:
         bidder.commitment_hex = commitment_hex
         bidder.commit_order = self._commits_received
         self._commits_received += 1
-
-        if all(b.commitment_hex is not None for b in self.bidders.values()):
-            self.state = AuctionState.COMMITTED
+        self._advance()
 
         return CommitResult(phase=self.state, message=f"{bidder.name} committed successfully.")
 
@@ -246,8 +342,9 @@ class Auction:
         auction's [min_bid, max_bid], for this auction and bidder
         (proof_context); a proof of any other statement is recorded as invalid.
 
-        Allowed in states COMMITTED and PROVED.
-        Advances to PROVED once every bidder has submitted a proof, valid or not.
+        Allowed in state COMMITTED, before the prove deadline. Advances to
+        PROVED once every bidder still taking part has submitted a proof,
+        valid or not.
 
         Args:
             bidder_id: Identifier of the bidder submitting the proof.
@@ -257,16 +354,17 @@ class Auction:
             Whether the proof is valid, the phase after it, and a log message.
 
         Raises:
-            ValueError: On invalid state, unknown bidder_id, or missing commitment.
+            ValueError: On invalid state, unknown bidder_id, a missed deadline,
+                or a duplicate proof.
         """
-        if self.state not in (AuctionState.COMMITTED, AuctionState.PROVED):
+        self._advance()
+        bidder = self._participant(bidder_id)
+        if self.state != AuctionState.COMMITTED:
             raise ValueError(
-                f"Cannot submit proof in state '{self.state.value}'. Expected COMMITTED or PROVED."
+                f"Cannot submit proof in state '{self.state.value}'. Expected COMMITTED."
             )
-        if bidder_id not in self.bidders:
-            raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
-
-        bidder = self.bidders[bidder_id]
+        # Everyone still taking part has committed by now; the check lets the
+        # type checker see that commitment_hex is set below.
         if bidder.commitment_hex is None:
             raise ValueError(
                 f"Bidder '{bidder.name}' has not committed yet. Submit commitment first."
@@ -291,9 +389,7 @@ class Auction:
 
         bidder.range_proof = proof_data
         bidder.proof_valid = is_valid
-
-        if all(b.proof_valid is not None for b in self.bidders.values()):
-            self.state = AuctionState.PROVED
+        self._advance()
 
         return ProofResult(
             proof_valid=is_valid,
@@ -311,10 +407,11 @@ class Auction:
 
         Bidders with a failed commitment verification are marked as cheaters and
         excluded from the winner determination. Bidders whose range proof was
-        invalid, or whose revealed bid lies outside [min_bid, max_bid], may still
-        reveal, so the auction can finish, but cannot win.
+        invalid, or whose revealed bid lies outside [min_bid, max_bid], reveal
+        like everyone else but cannot win.
 
-        Advances to FINISHED once all bidders have revealed.
+        Allowed in state PROVED, before the reveal deadline. Advances to
+        FINISHED once every bidder still taking part has revealed.
 
         Args:
             bidder_id: Identifier of the bidder revealing.
@@ -326,20 +423,19 @@ class Auction:
             reveal, a log message, and the winner once the auction is finished.
 
         Raises:
-            ValueError: On invalid state, unknown bidder, missing proof, duplicate
-                reveal, or a blinding that is not a scalar in [0, n). Malformed
-                input is rejected rather than counted as a failed opening.
+            ValueError: On invalid state, unknown bidder, a missed deadline,
+                duplicate reveal, or a blinding that is not a scalar in [0, n).
+                Malformed input is rejected rather than counted as a failed
+                opening.
         """
         if isinstance(blinding, bool) or not isinstance(blinding, int) or not 0 <= blinding < N:
             raise ValueError("The blinding factor must be an integer in [0, n).")
+        self._advance()
+        bidder = self._participant(bidder_id)
         if self.state != AuctionState.PROVED:
             raise ValueError(f"Cannot reveal in state '{self.state.value}'. Expected PROVED.")
-        if bidder_id not in self.bidders:
-            raise ValueError(f"Unknown bidder_id '{bidder_id}'.")
-
-        bidder = self.bidders[bidder_id]
-        # A proof implies a commitment; checking both lets the type checker
-        # see that commitment_hex is set below.
+        # Everyone still taking part has proved by now, and a proof implies a
+        # commitment; the checks let the type checker see that too.
         if bidder.commitment_hex is None or bidder.proof_valid is None:
             raise ValueError(f"Bidder '{bidder.name}' has not submitted a ZK proof yet.")
         if bidder.revealed_bid is not None:
@@ -352,11 +448,8 @@ class Auction:
         bidder.revealed_bid = bid
         bidder.revealed_blinding = blinding
         bidder.commitment_verified = is_verified
-
-        if all(b.revealed_bid is not None for b in self.bidders.values()):
-            self.state = AuctionState.FINISHED
-
-        winner = self.get_winner() if self.state == AuctionState.FINISHED else None
+        self._advance()
+        winner = self._winner()  # None until this reveal finishes the auction
 
         if not is_verified:
             outcome = "INVALID — marked as cheater"
@@ -381,12 +474,16 @@ class Auction:
         Return the complete public state visible to all participants.
 
         Bids and blinding factors are included only once the auction is FINISHED.
+        Times are ISO 8601 in UTC; server_time is the time the state is as of,
+        so clients can count down to a deadline without trusting their own clock.
         """
+        now = self._advance()
         bidders_public = []
         for b in self.bidders.values():
             entry = {
                 "bidder_id": b.bidder_id,
                 "name": b.name,
+                "missed_deadline": b.missed_deadline,
                 "commitment_hex": b.commitment_hex,
                 "commit_order": b.commit_order,
                 "proof_valid": b.proof_valid,
@@ -394,8 +491,8 @@ class Auction:
             }
             # Publishing reveals as they arrive would let bidders who have not
             # revealed yet see the others' bids and withhold their own if they
-            # are losing (selective abort), so openings stay hidden until all
-            # bidders have revealed.
+            # are losing (selective abort), so openings stay hidden until the
+            # reveal phase is over.
             if self.state == AuctionState.FINISHED:
                 entry["revealed_bid"] = b.revealed_bid
                 entry["randomness_hex"] = (
@@ -403,13 +500,15 @@ class Auction:
                 )
             bidders_public.append(entry)
 
-        winner = self.get_winner()
+        winner = self._winner()
         return {
             "auction_id": self.auction_id,
             "state": self.state.value,
             "item_name": self.config.item_name,
             "min_bid": self.config.min_bid,
             "max_bid": self.config.max_bid,
+            "server_time": _timestamp(now),
+            "deadlines": {step: _timestamp(t) for step, t in self.deadlines.items()},
             "bidders": bidders_public,
             "winner": winner.to_dict() if winner else None,
         }
@@ -421,12 +520,17 @@ class Auction:
         The winner is the bidder with the highest bid among eligible bidders:
         those whose range proof was valid, whose reveal opened their commitment,
         and whose revealed bid lies within [min_bid, max_bid]. In case of a tie,
-        the bidder who committed first wins.
+        the bidder who committed first wins. Bidders who missed a deadline
+        never get that far.
 
         Returns:
             The winner, or None if the auction is not yet finished or no bidder
             is eligible.
         """
+        self._advance()
+        return self._winner()
+
+    def _winner(self) -> Winner | None:
         if self.state != AuctionState.FINISHED:
             return None
 

@@ -105,33 +105,49 @@ function removeBidderInput(btn) {
 // Create auction
 // ---------------------------------------------------------------------------
 
-async function createAuction() {
-  const errEl = document.getElementById("setup-error");
-  errEl.style.display = "none";
+/**
+ * The /api/create request described by the setup form, or null after showing
+ * what is wrong. Every step (commit, prove, reveal) gets the same window.
+ */
+function readSetupForm() {
+  document.getElementById("setup-error").style.display = "none";
 
   const itemName = document.getElementById("item-name").value.trim();
   const minBid   = parseInt(document.getElementById("min-bid").value, 10);
   const maxBid   = parseInt(document.getElementById("max-bid").value, 10);
+  const minutes  = parseInt(document.getElementById("phase-minutes").value, 10);
   const names    = [...document.querySelectorAll(".bidder-name-input")]
                      .map(i => i.value.trim())
                      .filter(Boolean);
 
-  if (!itemName)            { showSetupError("Item name is required."); return; }
-  if (isNaN(minBid) || isNaN(maxBid)) { showSetupError("Bid bounds must be numbers."); return; }
-  if (minBid >= maxBid)     { showSetupError("Min bid must be less than max bid."); return; }
-  if (names.length < 2)     { showSetupError("At least 2 bidder names are required."); return; }
+  if (!itemName)            { showSetupError("Item name is required."); return null; }
+  if (isNaN(minBid) || isNaN(maxBid)) { showSetupError("Bid bounds must be numbers."); return null; }
+  if (minBid >= maxBid)     { showSetupError("Min bid must be less than max bid."); return null; }
+  if (names.length < 2)     { showSetupError("At least 2 bidder names are required."); return null; }
+  if (isNaN(minutes) || minutes < 1) { showSetupError("Each phase needs at least 1 minute."); return null; }
+
+  const seconds = minutes * 60;
+  return {
+    item_name:      itemName,
+    min_bid:        minBid,
+    max_bid:        maxBid,
+    bidders:        names,
+    commit_seconds: seconds,
+    prove_seconds:  seconds,
+    reveal_seconds: seconds,
+  };
+}
+
+async function createAuction() {
+  const request = readSetupForm();
+  if (!request) return;
 
   try {
     const btn = document.getElementById("btn-create");
     btn.disabled = true;
     btn.textContent = "Creating…";
 
-    const data = await apiFetch("/api/create", "POST", {
-      item_name: itemName,
-      min_bid:   minBid,
-      max_bid:   maxBid,
-      bidders:   names,
-    });
+    const data = await apiFetch("/api/create", "POST", request);
 
     rememberAuction(data);
 
@@ -323,9 +339,37 @@ async function refreshState() {
     const data = await apiFetch("/api/state");
     localState.serverState = data;
     renderAll(data);
+    scheduleDeadlineRefresh(data);
   } catch (err) {
     console.error("refreshState error:", err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Deadlines. Each phase waits for one step, which names its deadline in the
+// public state; the server applies deadlines whenever it is asked.
+// ---------------------------------------------------------------------------
+
+const PHASE_STEP = { open: "commit", committed: "prove", proved: "reveal" };
+
+let deadlineTimer = null;
+
+/** The deadline (ISO 8601) of the phase in progress. */
+function currentDeadline(state) {
+  return state.deadlines[PHASE_STEP[state.state]];
+}
+
+/**
+ * Refresh once the current phase's deadline has passed, so the page shows who
+ * missed it. The delay is measured on the server's clock, which decides, so a
+ * wrong clock on this computer does not matter.
+ */
+function scheduleDeadlineRefresh(state) {
+  clearTimeout(deadlineTimer);
+  deadlineTimer = null;
+  if (state.state === "finished") return;
+  const delay = Date.parse(currentDeadline(state)) - Date.parse(state.server_time);
+  deadlineTimer = setTimeout(refreshState, Math.max(delay, 0) + 250);
 }
 
 function renderAll(state) {
@@ -373,6 +417,7 @@ function renderBidderCards(state) {
     // Card CSS classes
     let cardClass = "bidder-card";
     if (isWinner)        cardClass += " winner";
+    else if (b.missed_deadline) cardClass += " missed";
     else if (hasRevealed) cardClass += " revealed";
     else if (hasProved)   cardClass += " proved";
     else if (hasCommitted) cardClass += " committed";
@@ -396,6 +441,11 @@ function renderBidderCards(state) {
     } else if (hasRevealed && !b.commitment_verified) {
       revealedLine = `<div style="color:var(--red);font-size:12px;margin-bottom:6px;">⚠ Cheater detected — bid invalid</div>`;
     }
+
+    // A missed deadline: no further part, so no buttons follow either
+    const missedLine = b.missed_deadline
+      ? `<div class="bidder-missed">⏱ Missed the ${escapeHtml(b.missed_deadline)} deadline — out of the auction</div>`
+      : "";
 
     // Winner badge
     const winnerBadge = isWinner
@@ -455,6 +505,7 @@ function renderBidderCards(state) {
         </div>
         ${commitLine}
         ${revealedLine}
+        ${missedLine}
         ${winnerBadge}
         ${actionHTML ? `<div class="bidder-actions">${actionHTML}</div>` : ""}
       </div>`;
@@ -470,10 +521,12 @@ function renderActionsPanel(state) {
   const phase     = state.state;
   const bidders   = state.bidders;
 
-  const committed = bidders.filter(b => b.commitment_hex).length;
-  const proved    = bidders.filter(b => b.proof_valid !== null && b.proof_valid !== undefined).length;
-  const revealed  = bidders.filter(hasRevealedBid).length;
-  const total     = bidders.length;
+  // Bidders who missed a deadline are out, so progress counts the others.
+  const taking    = bidders.filter(b => !b.missed_deadline);
+  const committed = taking.filter(b => b.commitment_hex).length;
+  const proved    = taking.filter(b => b.proof_valid !== null && b.proof_valid !== undefined).length;
+  const revealed  = taking.filter(hasRevealedBid).length;
+  const total     = taking.length;
 
   let html = "";
 
@@ -486,7 +539,7 @@ function renderActionsPanel(state) {
     proved:    { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
       desc: "Each bidder reveals <code>(bid, r)</code>. Anyone can check that <code>bid·G + r·H</code> equals the commitment. Highest verified bid wins; ties go to the earliest commitment." },
     finished:  { title: "Auction Complete", color: "var(--color-finish)",
-      desc: "All bids have been revealed and verified. The winner has been determined." },
+      desc: "The reveal phase is over. The winner has been determined from the verified bids." },
   };
 
   const desc = phaseDescriptions[phase] || phaseDescriptions.open;
@@ -522,6 +575,16 @@ function renderActionsPanel(state) {
           <div class="progress-bar-fill" style="width:${progressPct.toFixed(0)}%"></div>
         </div>
       </div>`;
+
+    const closes = new Date(currentDeadline(state)).toLocaleTimeString("en-GB");
+    html += `
+      <div class="action-section">
+        <div class="action-section-title">Deadline</div>
+        <div class="action-info">
+          This phase closes at <strong>${closes}</strong> at the latest. Bidders
+          who have not acted by then are out of the auction.
+        </div>
+      </div>`;
   }
 
   // Auction config
@@ -532,7 +595,7 @@ function renderActionsPanel(state) {
         <strong>Item:</strong> ${escapeHtml(state.item_name)}<br/>
         <strong>Min bid:</strong> ${fmtBid(state.min_bid)}<br/>
         <strong>Max bid:</strong> ${fmtBid(state.max_bid)}<br/>
-        <strong>Bidders:</strong> ${total}
+        <strong>Bidders:</strong> ${bidders.length}
       </div>
     </div>`;
 
@@ -546,6 +609,12 @@ function renderActionsPanel(state) {
           Winning bid: <strong style="color:var(--green)">${fmtBid(state.winner.bid)}</strong><br/>
           <span style="font-size:10px;color:var(--text-dim)">Commitment verified ✓</span>
         </div>
+      </div>`;
+  } else if (phase === "finished") {
+    html += `
+      <div class="action-section">
+        <div class="action-section-title">No winner</div>
+        <div class="action-info">No bidder completed every step with a valid, verified bid.</div>
       </div>`;
   }
 
@@ -618,6 +687,7 @@ async function resetAuction() {
   } catch (_) { /* ignore */ }
 
   // Clear client state
+  clearTimeout(deadlineTimer);
   localState.auction = null;
   localState.serverState = null;
   localState.joinTokens = {};
@@ -687,21 +757,8 @@ function setDemoStatus(text) {
 }
 
 async function startDemo() {
-  // Validate setup form (same as createAuction)
-  const errEl = document.getElementById("setup-error");
-  errEl.style.display = "none";
-
-  const itemName = document.getElementById("item-name").value.trim();
-  const minBid   = parseInt(document.getElementById("min-bid").value, 10);
-  const maxBid   = parseInt(document.getElementById("max-bid").value, 10);
-  const names    = [...document.querySelectorAll(".bidder-name-input")]
-                     .map(i => i.value.trim())
-                     .filter(Boolean);
-
-  if (!itemName)         { showSetupError("Item name is required."); return; }
-  if (isNaN(minBid) || isNaN(maxBid)) { showSetupError("Bid bounds must be numbers."); return; }
-  if (minBid >= maxBid)  { showSetupError("Min bid must be less than max bid."); return; }
-  if (names.length < 2)  { showSetupError("At least 2 bidder names are required."); return; }
+  const request = readSetupForm();
+  if (!request) return;
 
   // Create the auction on the server
   const createBtn = document.getElementById("btn-create");
@@ -712,9 +769,7 @@ async function startDemo() {
 
   let auctionData;
   try {
-    auctionData = await apiFetch("/api/create", "POST", {
-      item_name: itemName, min_bid: minBid, max_bid: maxBid, bidders: names,
-    });
+    auctionData = await apiFetch("/api/create", "POST", request);
   } catch (err) {
     showSetupError(err.message);
     createBtn.disabled = false;
@@ -735,7 +790,7 @@ async function startDemo() {
   await refreshState();
   addPublicLogEntry("Auction created (Demo mode)", {
     item:    auctionData.item_name,
-    range:   `${fmtBid(minBid)} – ${fmtBid(maxBid)}`,
+    range:   `${fmtBid(auctionData.min_bid)} – ${fmtBid(auctionData.max_bid)}`,
     bidders: auctionData.bidders.map(b => b.name).join(", "),
   });
 
@@ -743,7 +798,7 @@ async function startDemo() {
   const bidderIds = auctionData.bidders.map(b => b.bidder_id);
   const assignedBids = {};
   bidderIds.forEach(id => {
-    assignedBids[id] = randInt(minBid, maxBid);
+    assignedBids[id] = randInt(auctionData.min_bid, auctionData.max_bid);
   });
 
   demo.running = true;

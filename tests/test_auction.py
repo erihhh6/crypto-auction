@@ -1,20 +1,28 @@
 """Tests for crypto_auction.auction — state machine and auction logic."""
 
 import unittest
+from datetime import datetime
 from unittest import mock
 
 from crypto_auction.auction import Auction, AuctionConfig, AuctionState
 from crypto_auction.pedersen import N, commit, decode_point, decode_scalar, encode_point, verify
 from crypto_auction.range_proof import prove_range
+from tests.support import FakeClock
 
 
-def make_auction(bidder_names=None, min_bid=100, max_bid=5000):
+def make_auction(bidder_names=None, min_bid=100, max_bid=5000, **kwargs):
+    """An auction; kwargs go to Auction (clock) or AuctionConfig (window lengths)."""
     if bidder_names is None:
         bidder_names = ["Alice", "Bob", "Carol"]
+    clock = kwargs.pop("clock", None)
     config = AuctionConfig(
-        min_bid=min_bid, max_bid=max_bid, item_name="Test Item", bidder_names=tuple(bidder_names)
+        min_bid=min_bid,
+        max_bid=max_bid,
+        item_name="Test Item",
+        bidder_names=tuple(bidder_names),
+        **kwargs,
     )
-    return Auction(config)
+    return Auction(config) if clock is None else Auction(config, clock=clock)
 
 
 def submit_commit(auction, bidder_id, c):
@@ -29,9 +37,9 @@ def proof_for(auction, bidder_id, c, *, bounds=None, context=None):
     return prove_range(c.point, c.value, c.blinding, min_bid, max_bid, context).to_dict()
 
 
-def committed_auction(bids):
+def committed_auction(bids, **kwargs):
     """An auction where every bidder committed; bids = {name: bid}."""
-    auction = make_auction(list(bids))
+    auction = make_auction(list(bids), **kwargs)
     openings = {}
     for bidder_id, b in auction.bidders.items():
         openings[bidder_id] = commit(bids[b.name])
@@ -39,8 +47,8 @@ def committed_auction(bids):
     return auction, openings
 
 
-def proved_auction(bids):
-    auction, openings = committed_auction(bids)
+def proved_auction(bids, **kwargs):
+    auction, openings = committed_auction(bids, **kwargs)
     for bidder_id, c in openings.items():
         auction.submit_proof(bidder_id, proof_for(auction, bidder_id, c))
     return auction, openings
@@ -104,6 +112,123 @@ class TestBidderIdentity(unittest.TestCase):
         held = repr(vars(auction)) + repr(auction.get_public_state())
         for token in tokens.values():
             self.assertNotIn(token, held)
+
+
+WINDOW = 60  # seconds per step in the deadline tests
+BIDS = {"Alice": 1200, "Bob": 1800, "Carol": 1500}  # Bob bids highest, then Carol
+
+
+def timed(**kwargs):
+    """Arguments for an auction on a fake clock, with WINDOW-second steps."""
+    clock = FakeClock()
+    windows = {f"{s}_seconds": WINDOW for s in ("commit", "prove", "reveal")}
+    return clock, {"clock": clock, **windows, **kwargs}
+
+
+class TestDeadlines(unittest.TestCase):
+    def test_windows_follow_one_another_from_creation(self):
+        _, kwargs = timed(commit_seconds=60, prove_seconds=120, reveal_seconds=30)
+        auction = make_auction(**kwargs)
+        start = FakeClock.START
+        self.assertEqual(
+            auction.deadlines,
+            {"commit": start + 60, "prove": start + 180, "reveal": start + 210},
+        )
+
+    def test_a_commitment_at_the_deadline_is_too_late(self):
+        clock, kwargs = timed()
+        auction = make_auction(**kwargs)
+        clock.advance(WINDOW - 0.001)
+        submit_commit(auction, "bidder_0", commit(1200))  # just in time
+        clock.advance(0.001)
+        with self.assertRaisesRegex(ValueError, "missed the commit deadline"):
+            submit_commit(auction, "bidder_1", commit(1800))
+
+    def test_bidders_who_miss_the_commit_deadline_take_no_further_part(self):
+        clock, kwargs = timed()
+        auction = make_auction(**kwargs)
+        openings = {"bidder_0": commit(1200), "bidder_1": commit(1800)}
+        for bidder_id, c in openings.items():
+            submit_commit(auction, bidder_id, c)
+        clock.advance(WINDOW)
+
+        # The others move on to proving without Carol, who cannot catch up.
+        self.assertEqual(auction.get_public_state()["state"], "committed")
+        self.assertEqual(auction.bidders["bidder_2"].missed_deadline, "commit")
+        with self.assertRaisesRegex(ValueError, "missed the commit deadline"):
+            submit_commit(auction, "bidder_2", commit(1500))
+        for bidder_id, c in openings.items():
+            auction.submit_proof(bidder_id, proof_for(auction, bidder_id, c))
+        for bidder_id, c in openings.items():
+            auction.submit_reveal(bidder_id, c.value, c.blinding)
+
+        self.assertEqual(auction.state, AuctionState.FINISHED)
+        self.assertEqual(auction.get_winner().name, "Bob")
+
+    def test_bidders_who_miss_the_prove_deadline_need_not_reveal(self):
+        clock, kwargs = timed()
+        auction, openings = committed_auction(BIDS, **kwargs)
+        for bidder_id in ("bidder_0", "bidder_2"):  # Bob never proves
+            auction.submit_proof(bidder_id, proof_for(auction, bidder_id, openings[bidder_id]))
+        clock.advance(2 * WINDOW)
+
+        bob = openings["bidder_1"]
+        with self.assertRaisesRegex(ValueError, "missed the prove deadline"):
+            auction.submit_reveal("bidder_1", bob.value, bob.blinding)
+        # The auction finishes as soon as the others have revealed.
+        for bidder_id in ("bidder_0", "bidder_2"):
+            c = openings[bidder_id]
+            auction.submit_reveal(bidder_id, c.value, c.blinding)
+        self.assertEqual(auction.state, AuctionState.FINISHED)
+        self.assertEqual(auction.get_winner().name, "Carol")
+
+    def test_the_highest_bidder_forfeits_by_not_revealing(self):
+        # Withholding a reveal no longer stalls the auction: once the reveal
+        # deadline passes, the auction finishes without the silent bidder.
+        clock, kwargs = timed()
+        auction, openings = proved_auction(BIDS, **kwargs)
+        for bidder_id in ("bidder_0", "bidder_2"):  # Bob stays silent
+            c = openings[bidder_id]
+            auction.submit_reveal(bidder_id, c.value, c.blinding)
+        self.assertEqual(auction.state, AuctionState.PROVED)
+
+        clock.advance(3 * WINDOW)
+        state = auction.get_public_state()
+        self.assertEqual(state["state"], "finished")
+        self.assertEqual(state["winner"]["name"], "Carol")
+        bob = state["bidders"][1]
+        self.assertEqual(bob["missed_deadline"], "reveal")
+        self.assertIsNone(bob["revealed_bid"])
+
+    def test_nobody_committing_ends_the_auction_without_a_winner(self):
+        clock, kwargs = timed()
+        auction = make_auction(**kwargs)
+        clock.advance(WINDOW)
+        self.assertIsNone(auction.get_winner())
+        self.assertEqual(auction.state, AuctionState.FINISHED)
+        self.assertEqual({b.missed_deadline for b in auction.bidders.values()}, {"commit"})
+
+    def test_one_query_passes_every_deadline_that_has_passed(self):
+        clock, kwargs = timed()
+        auction, _ = committed_auction(BIDS, **kwargs)  # then nobody proves
+        clock.advance(10 * WINDOW)
+        self.assertEqual(auction.get_public_state()["state"], "finished")
+        self.assertEqual({b.missed_deadline for b in auction.bidders.values()}, {"prove"})
+
+    def test_public_state_gives_deadlines_and_server_time_in_utc(self):
+        clock, kwargs = timed()
+        auction = make_auction(**kwargs)
+        clock.advance(5)
+        state = auction.get_public_state()
+
+        def parse(text):
+            self.assertTrue(text.endswith("+00:00"), text)  # UTC, with an explicit offset
+            return datetime.fromisoformat(text).timestamp()
+
+        self.assertEqual(parse(state["server_time"]), FakeClock.START + 5)
+        deadlines = {step: parse(text) for step, text in state["deadlines"].items()}
+        self.assertEqual(deadlines, auction.deadlines)
+        self.assertEqual({b["missed_deadline"] for b in state["bidders"]}, {None})
 
 
 class TestPhase1Commit(unittest.TestCase):

@@ -17,8 +17,8 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > **Work in progress.** This started as a prototype and is being hardened step
 > by step. The cryptographic guarantees below now hold under the
 > honest-but-curious model, but the application around them is not
-> production-ready yet: there are no deadlines, and anyone can reset the
-> auction, among others. See [Limitations](#limitations).
+> production-ready yet: anyone can reset the auction, and nothing is stored
+> on disk, among others. See [Limitations](#limitations).
 
 ---
 
@@ -76,7 +76,9 @@ protect bidders from each other and from outsiders, not from the organizer.
 ```
 SETUP
   The organizer creates the auction; each bidder receives a secret join
-  token, which authenticates every request they make below
+  token, which authenticates every request they make below. The commit,
+  prove and reveal windows (10 minutes each by default) follow one another,
+  so all three deadlines are fixed now
 
 PHASE 1 — COMMIT
   Bidder i chooses bid_i and a random blinding factor r_i ∈ [0, n)
@@ -95,6 +97,11 @@ PHASE 3 — REVEAL
   Auctioneer verifies: bid_i·G + r_i·H == C_i
   Winner = highest verified in-range bid; ties go to the earliest commitment
 ```
+
+A phase ends once every bidder still taking part has acted, or at its
+deadline. A bidder who misses a deadline takes no further part and cannot
+win; the others carry on. So a bidder who stays silent, for instance one
+who withholds a reveal, cannot stall the auction.
 
 Phases 1 and 2 run in the bidder's browser; the server stores and verifies
 what it receives. The Python and JavaScript implementations share one wire
@@ -267,7 +274,9 @@ trades size for simplicity.
   [Security Model](#security-model).)
 - **One page plays every bidder**: the page that creates the auction receives
   every join token; there is no per-bidder view yet.
-- **No deadlines**: a bidder who never commits or reveals stalls the auction.
+- **No deposits**: a bidder who misses a deadline only loses the chance to
+  win. A real deployment would take a deposit that is forfeited along with
+  it, so that dropping out has a cost.
 - **Single-server model**: Production would use MPC for the auctioneer role.
 - **In-memory state**: No database; a server restart resets the auction.
 

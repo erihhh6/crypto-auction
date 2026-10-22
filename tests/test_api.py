@@ -1,6 +1,7 @@
 """Tests for the REST API (crypto_auction.web), exercised through Flask's test client."""
 
 import unittest
+from datetime import datetime
 from unittest import mock
 
 from crypto_auction.auction import Auction, bid_proof_context
@@ -14,8 +15,10 @@ from crypto_auction.pedersen import (
     verify,
 )
 from crypto_auction.range_proof import prove_range
+from crypto_auction.service import AuctionService
 from crypto_auction.web import create_app
-from crypto_auction.web.api import MAX_NAME_LENGTH
+from crypto_auction.web.api import MAX_NAME_LENGTH, MAX_PHASE_SECONDS, MIN_PHASE_SECONDS
+from tests.support import FakeClock
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
@@ -32,11 +35,13 @@ def opening(secret):
 
 
 class ApiTestCase(unittest.TestCase):
-    """Gives every test its own app, and so its own empty auction."""
+    """Gives every test its own app, and so its own empty auction, on a fake clock."""
 
     def setUp(self):
+        self.clock = FakeClock()
         # TESTING lets unhandled exceptions propagate instead of becoming 500s.
-        self.client = create_app({"TESTING": True}).test_client()
+        app = create_app({"TESTING": True}, service=AuctionService(clock=self.clock))
+        self.client = app.test_client()
 
     def post(self, path, **body):
         return self.client.post(path, json=body)
@@ -462,6 +467,63 @@ class TestReveal(ApiTestCase):
 
         for number in ints(self.state()):
             self.assertLessEqual(abs(number), 2**53 - 1)
+
+
+class TestDeadlines(ApiTestCase):
+    def deadlines(self):
+        """The public deadlines, as seconds after the auction was created."""
+        state = self.state()
+        return {
+            step: datetime.fromisoformat(text).timestamp() - FakeClock.START
+            for step, text in state["deadlines"].items()
+        }
+
+    def test_windows_default_to_ten_minutes_each(self):
+        self.create()
+        self.assertEqual(self.deadlines(), {"commit": 600, "prove": 1200, "reveal": 1800})
+        server_time = datetime.fromisoformat(self.state()["server_time"]).timestamp()
+        self.assertEqual(server_time, FakeClock.START)
+
+    def test_each_window_can_be_set(self):
+        self.assert_ok(self.create(commit_seconds=60, prove_seconds=120, reveal_seconds=30))
+        self.assertEqual(self.deadlines(), {"commit": 60, "prove": 180, "reveal": 210})
+
+    def test_window_lengths_must_be_integers_within_bounds(self):
+        bad = (MIN_PHASE_SECONDS - 1, MAX_PHASE_SECONDS + 1, "60", 60.5, True)
+        for field in ("commit_seconds", "prove_seconds", "reveal_seconds"):
+            for value in bad:
+                with self.subTest(field=field, value=value):
+                    self.assert_error(self.create(**{field: value}))
+            for value in (MIN_PHASE_SECONDS, MAX_PHASE_SECONDS):
+                with self.subTest(field=field, value=value):
+                    self.assert_ok(self.create(**{field: value}))
+
+    def test_a_late_commitment_is_rejected_and_the_auction_moves_on(self):
+        self.create(commit_seconds=60)
+        self.commit_all({"bidder_0": 1200, "bidder_1": 1800})
+        self.clock.advance(60)
+
+        late = encode_point(commit(1500).point)
+        body = self.assert_error(self.post_as("bidder_2", "/api/commit", commitment_hex=late))
+        self.assertIn("missed the commit deadline", body["error"])
+        state = self.state()
+        self.assertEqual(state["state"], "committed")
+        self.assertEqual([b["missed_deadline"] for b in state["bidders"]], [None, None, "commit"])
+
+    def test_a_bidder_who_does_not_reveal_forfeits(self):
+        self.create()
+        secrets = self.commit_all()
+        self.prove_all(secrets)
+        for bidder_id in ("bidder_0", "bidder_2"):  # Bob, the highest bidder, stays silent
+            self.assert_ok(self.post_as(bidder_id, "/api/reveal", **opening(secrets[bidder_id])))
+        self.assertEqual(self.state()["state"], "proved")
+
+        self.clock.advance(1800)
+        state = self.state()
+        self.assertEqual(state["state"], "finished")
+        self.assertEqual(state["winner"]["name"], "Carol")
+        self.assertEqual(state["bidders"][1]["missed_deadline"], "reveal")
+        self.assert_error(self.post_as("bidder_1", "/api/reveal", **opening(secrets["bidder_1"])))
 
 
 class TestBidderAuthentication(ApiTestCase):

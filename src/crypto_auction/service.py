@@ -11,11 +11,13 @@ AuthenticationError to 401 and AuctionRuleError to 400.
 """
 
 import threading
+import time
 from typing import Any
 
 from crypto_auction.auction import (
     Auction,
     AuctionConfig,
+    Clock,
     CommitResult,
     ProofResult,
     RevealResult,
@@ -35,7 +37,9 @@ class AuctionRuleError(Exception):
 
 
 class AuctionService:
-    def __init__(self) -> None:
+    def __init__(self, clock: Clock = time.time) -> None:
+        """clock: what the auction's deadlines are measured against (tests pass a fake)."""
+        self._clock = clock
         self._auction: Auction | None = None
         # Flask serves requests on several threads, and every operation reads
         # and updates the auction (phase changes, commit order), so they run
@@ -75,7 +79,7 @@ class AuctionService:
         The tokens cannot be retrieved later: the auction keeps only digests.
         """
         with self._lock:
-            self._auction = Auction(config)
+            self._auction = Auction(config, clock=self._clock)
             return self._auction, self._auction.issue_join_tokens()
 
     def public_state(self) -> dict[str, Any]:

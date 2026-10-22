@@ -51,12 +51,20 @@ function assertEscaped(html) {
   assert.ok(html.includes(ESCAPED), "the text itself should still be shown, escaped");
 }
 
+const DEADLINES = {
+  commit: "2027-01-15T08:10:00.000+00:00",
+  prove: "2027-01-15T08:20:00.000+00:00",
+  reveal: "2027-01-15T08:30:00.000+00:00",
+};
+
 function auctionState(overrides = {}) {
   return {
     state: "open",
     item_name: PAYLOAD,
     min_bid: 100,
     max_bid: 5000,
+    server_time: "2027-01-15T08:00:00.000+00:00",
+    deadlines: DEADLINES,
     winner: null,
     bidders: [
       {
@@ -117,6 +125,30 @@ test("during the reveal phase, a bidder who revealed is shown as revealed", () =
 
   app.renderActionsPanel(state);
   assert.match(html("actions-content"), /Revealed: 1 \/ 2/);
+});
+
+test("a bidder who missed a deadline is shown as out, and progress counts the others", () => {
+  const { app, html } = loadApp();
+  const state = auctionState({
+    state: "committed",
+    bidders: [
+      { bidder_id: "bidder_0", name: "Alice", commitment_hex: "02" + "aa".repeat(32), proof_valid: null },
+      { bidder_id: "bidder_1", name: "Bob", commitment_hex: null, missed_deadline: "commit" },
+    ],
+  });
+
+  app.renderBidderCards(state);
+  const cards = html("bidder-cards");
+  assert.ok(cards.includes("Missed the commit deadline"));
+  assert.ok(cards.includes("btn-prove-bidder_0"), "Alice can still prove");
+  assert.ok(!cards.includes("btn-prove-bidder_1"), "Bob takes no further part");
+
+  app.renderActionsPanel(state);
+  const panel = html("actions-content");
+  assert.match(panel, /ZK Proved: 0 \/ 1/);
+  // The prove deadline, in the viewer's time zone.
+  const closes = new Date(DEADLINES.prove).toLocaleTimeString("en-GB");
+  assert.ok(panel.includes(`closes at <strong>${closes}</strong>`), panel);
 });
 
 test("proof summary reads the range proof format the API returns", () => {
