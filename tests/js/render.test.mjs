@@ -95,6 +95,30 @@ test("actions panel escapes the item and winner names", () => {
   assert.equal(rendered.split(ESCAPED).length - 1, 2);
 });
 
+test("during the reveal phase, a bidder who revealed is shown as revealed", () => {
+  // Public state after Alice revealed: the server publishes that she did
+  // (commitment_verified), but no bids until the auction is finished.
+  const { app, html } = loadApp();
+  const proved = { commitment_hex: "02" + "aa".repeat(32), proof_valid: true };
+  const state = auctionState({
+    state: "proved",
+    bidders: [
+      { bidder_id: "bidder_0", name: "Alice", ...proved, commitment_verified: true },
+      { bidder_id: "bidder_1", name: "Bob", ...proved, commitment_verified: null },
+    ],
+  });
+
+  app.renderBidderCards(state);
+  const cards = html("bidder-cards");
+  assert.ok(!cards.includes("btn-reveal-bidder_0"), "Alice must not be offered a second reveal");
+  assert.ok(cards.includes("btn-reveal-bidder_1"), "Bob has yet to reveal");
+  assert.ok(cards.includes("✓ Revealed"));
+  assert.ok(!cards.includes("NaN"), "no bid is known yet, so none is shown");
+
+  app.renderActionsPanel(state);
+  assert.match(html("actions-content"), /Revealed: 1 \/ 2/);
+});
+
 test("proof summary reads the range proof format the API returns", () => {
   const { app } = loadApp();
   // Shape of RangeProof.to_dict(): per side, one bit commitment per bit.

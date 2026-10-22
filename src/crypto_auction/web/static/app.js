@@ -34,6 +34,15 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+/**
+ * Whether a bidder has revealed. The server publishes this (as
+ * commitment_verified) at once, but the bid itself only when the auction is
+ * finished, so revealed_bid cannot tell.
+ */
+function hasRevealedBid(bidder) {
+  return bidder.commitment_verified !== null && bidder.commitment_verified !== undefined;
+}
+
 /** Log fields describing a range proof: one bit commitment per bit, per side. */
 function proofSummary(proof) {
   return {
@@ -356,7 +365,7 @@ function renderBidderCards(state) {
   state.bidders.forEach(b => {
     const hasCommitted = !!b.commitment_hex;
     const hasProved    = b.proof_valid !== null && b.proof_valid !== undefined;
-    const hasRevealed  = b.revealed_bid !== null && b.revealed_bid !== undefined;
+    const hasRevealed  = hasRevealedBid(b);
     const isWinner     = state.winner && state.winner.bidder_id === b.bidder_id;
     const isCheater    = hasRevealed && b.commitment_verified === false;
     const secret       = localState.bidderSecrets[b.bidder_id];
@@ -381,7 +390,9 @@ function renderBidderCards(state) {
     // Revealed bid
     let revealedLine = "";
     if (hasRevealed && b.commitment_verified) {
-      revealedLine = `<div class="bidder-revealed-bid">${fmtBid(b.revealed_bid)}</div>`;
+      revealedLine = b.revealed_bid === undefined
+        ? `<div class="bidder-revealed-pending">✓ Revealed — bids are shown once everyone has</div>`
+        : `<div class="bidder-revealed-bid">${fmtBid(b.revealed_bid)}</div>`;
     } else if (hasRevealed && !b.commitment_verified) {
       revealedLine = `<div style="color:var(--red);font-size:12px;margin-bottom:6px;">⚠ Cheater detected — bid invalid</div>`;
     }
@@ -461,7 +472,7 @@ function renderActionsPanel(state) {
 
   const committed = bidders.filter(b => b.commitment_hex).length;
   const proved    = bidders.filter(b => b.proof_valid !== null && b.proof_valid !== undefined).length;
-  const revealed  = bidders.filter(b => b.revealed_bid !== null && b.revealed_bid !== undefined).length;
+  const revealed  = bidders.filter(hasRevealedBid).length;
   const total     = bidders.length;
 
   let html = "";
