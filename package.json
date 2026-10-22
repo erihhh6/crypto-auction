@@ -11,12 +11,15 @@
     "lint": "eslint --max-warnings=0 .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test \"tests/js/*.test.mjs\""
+    "test": "node --test \"tests/js/*.test.mjs\"",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@eslint/compat": "2.1.1",
     "@eslint/js": "10.0.1",
     "@noble/secp256k1": "3.2.0",
+    "@playwright/test": "1.64.1",
     "eslint": "10.13.0",
     "globals": "17.13.0",
     "prettier": "3.9.10"

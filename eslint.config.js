@@ -45,4 +45,12 @@ export default defineConfig([
     files: ["tests/js/**/*.mjs", "*.config.js"],
     languageOptions: { sourceType: "module", globals: globals.node },
   },
+  // Playwright tests run in Node, but the functions they hand to the page
+  // (addInitScript, evaluate) run in the browser.
+  {
+    files: ["tests/e2e/**/*.mjs"],
+    languageOptions: { sourceType: "module", globals: { ...globals.node, ...globals.browser } },
+    // A fixture that needs no other fixture is written `async ({}, use) => ...`.
+    rules: { "no-empty-pattern": "off" },
+  },
 ]);

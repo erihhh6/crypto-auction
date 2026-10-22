@@ -22,6 +22,11 @@ env/
 # JavaScript tooling (package.json)
 node_modules/
 
+# Playwright: traces and reports of the end-to-end tests
+test-results/
+playwright-report/
+blob-report/
+
 # Testing & coverage
 .coverage
 .coverage.*

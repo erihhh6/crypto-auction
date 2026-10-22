@@ -173,6 +173,9 @@ npm ci                      # JavaScript tooling, exactly as package-lock.json r
 npm run lint                # ESLint over the page's scripts and the JS tests
 npm run format:check        # Prettier: JS, CSS, HTML, JSON, YAML (npm run format fixes)
 npm test                    # frontend tests: rendering, request flow, browser crypto
+
+npx playwright install      # once: the browsers the end-to-end tests drive
+npm run test:e2e            # whole auctions in Chromium, Firefox and WebKit
 ```
 
 The JavaScript side needs Node 22.13+. Its packages only check the code: the
@@ -180,6 +183,14 @@ page itself has no build step, and `.npmrc` keeps them from running install
 scripts. `pytest` also runs `tests/test_browser_interop.py`, which drives the
 browser's crypto module with Node; without Node those tests are skipped, unless
 `REQUIRE_NODE=1` (as in CI).
+
+The end-to-end tests (`tests/e2e/`, Playwright) start the real server on port
+5099 with a fresh database, and play whole auctions in real browsers: each
+bidder joins from their own browser context with their join link, and one
+carries on from their receipt after closing the page. Every page is also
+audited with axe-core, and an uncaught error, a console error or anything the
+Content-Security-Policy blocks fails the test. Run them from the Python
+environment the package is installed in, or name its interpreter in `PYTHON`.
 
 Dependabot (`.github/dependabot.yml`) proposes updates of the Python packages,
 the npm packages and the GitHub Actions, each once its release is a week old.
@@ -198,8 +209,9 @@ the npm packages and the GitHub Actions, each once its release is a week old.
   every background, which `tests/test_accessibility.py` checks from the
   stylesheet; animations stop for anyone who asks their system for less motion.
 
-An axe-core audit in Chrome finds no violations on the setup page, a bidder's
-page, or a finished auction with the winner dialog open.
+The end-to-end tests audit the setup page, a bidder's page, and a finished
+auction with the winner dialog open with axe-core, in each browser: no
+violations.
 
 Known, not-yet-fixed bugs are recorded as tests that assert the correct
 behaviour, marked `@known_bug(...)` (a strict `xfail`, see `tests/support.py`).
@@ -239,6 +251,10 @@ crypto-auction/
 │               ├── style.css # Dark theme CSS
 │               └── vendor/   # Pinned third-party code (@noble/secp256k1) and provenance
 ├── tests/
+│   ├── e2e/                  # Playwright: whole auctions in real browsers, real server
+│   │   ├── auction.spec.mjs  # Join links on separate devices; receipts; axe audits
+│   │   ├── fixtures.mjs      # Bidder devices; fails a test on page errors or CSP blocks
+│   │   └── teardown.mjs      # Removes the run's database
 │   ├── js/
 │   │   ├── render.test.mjs   # Rendering: cards updated in place, escaping, phase indicator
 │   │   ├── fake-dom.mjs      # Minimal DOM to run app.js under Node
@@ -260,12 +276,14 @@ crypto-auction/
 ├── pyproject.toml            # Package metadata and tool configuration
 ├── requirements.txt          # Installs the package and its dependencies
 ├── requirements-dev.txt      # Test, lint and type-check tooling
-├── package.json              # JavaScript tooling (ESLint, Prettier) and the vendored library's version
+├── package.json              # JavaScript tooling (ESLint, Prettier, Playwright) and the vendored library's version
 ├── package-lock.json         # Exact versions and hashes of the npm packages
 ├── eslint.config.js          # ESLint rules, per script kind (page script, module, Node)
 ├── prettier.config.js        # Prettier settings; .prettierignore lists what it leaves alone
+├── playwright.config.js      # End-to-end tests: browsers, timeouts, the server they start
 ├── .npmrc                    # No install scripts; exact versions
-└── .gitattributes            # Vendored code checked out byte for byte (no CRLF conversion)
+├── .gitattributes            # Vendored code checked out byte for byte (no CRLF conversion)
+└── .git-blame-ignore-revs    # Formatting-only commits, skipped by blame
 ```
 
 ---
