@@ -12,6 +12,7 @@ import {
   commitBid,
   commitWith,
   encodeParts,
+  opensCommitment,
   proveBit,
   proveRange,
 } from "../../src/crypto_auction/web/static/auction-crypto.js";
@@ -65,6 +66,23 @@ test("commitments are homomorphic and canonically encoded", () => {
   assert.match(blindingHex, /^[0-9a-f]{64}$/);
   assert.ok(BigInt("0x" + blindingHex) < N);
   assert.ok(Point.fromHex(commitmentHex).equals(commitWith(1500n, BigInt("0x" + blindingHex))));
+});
+
+test("opensCommitment accepts the opening of a commitment and nothing else", () => {
+  const { commitmentHex, blindingHex } = commitBid(1500n);
+  assert.ok(opensCommitment(commitmentHex, 1500n, blindingHex));
+
+  const other = (BigInt("0x" + blindingHex) ^ 1n).toString(16).padStart(64, "0");
+  const wrong = {
+    "another bid": [1501n, blindingHex],
+    "another blinding factor": [1500n, other],
+    "a blinding factor of n or more": [1500n, N.toString(16)],
+    "uppercase hex": [1500n, blindingHex.toUpperCase()],
+    "a negative bid": [-1n, blindingHex],
+  };
+  for (const [label, [bid, blinding]] of Object.entries(wrong)) {
+    assert.equal(opensCommitment(commitmentHex, bid, blinding), false, label);
+  }
 });
 
 test("commitWith rejects scalars outside [0, n)", () => {

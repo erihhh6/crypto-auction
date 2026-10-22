@@ -217,11 +217,7 @@ async function createAuction() {
     const data = await apiFetch("/api/auctions", "POST", request);
 
     rememberAuction(data);
-
-    document.getElementById("setup-panel").style.display = "none";
-    document.getElementById("auction-view").style.display = "grid";
-    document.getElementById("phase-indicator").style.display = "flex";
-    document.getElementById("auction-item-label").textContent = data.item_name;
+    showAuctionView(data.item_name);
 
     await refreshState();
     addPublicLogEntry("Auction created", {
@@ -256,6 +252,142 @@ function rememberAuction(data) {
   bidderCards.clear();
   document.getElementById("bidder-cards").replaceChildren();
 }
+
+/** Leave the setup panel for the auction view. */
+function showAuctionView(itemName) {
+  document.getElementById("setup-panel").style.display = "none";
+  document.getElementById("auction-view").style.display = "grid";
+  document.getElementById("phase-indicator").style.display = "flex";
+  document.getElementById("auction-item-label").textContent = itemName;
+}
+
+// ---------------------------------------------------------------------------
+// Opening receipts. A bidder's secrets live only in this page's memory, so a
+// reload would lose them, and with them the chance to reveal. The receipt is
+// a file with everything needed to carry on as that bidder elsewhere or
+// later: the auction, the join token and the opening (bid and blinding
+// factor). Until the reveal it is as secret as the bid itself.
+// ---------------------------------------------------------------------------
+
+const RECEIPT_TYPE = "crypto-auction/opening-receipt";
+const RECEIPT_VERSION = 1;
+
+/** The receipt of a bidder whose opening this page holds. */
+function makeReceipt(bidderId) {
+  const secret = localState.bidderSecrets[bidderId];
+  return {
+    type:           RECEIPT_TYPE,
+    version:        RECEIPT_VERSION,
+    note:           "Keep this file private until the reveal: it holds your bid and secrets.",
+    auction_id:     localState.auction.auction_id,
+    item_name:      localState.auction.item_name,
+    bidder_id:      bidderId,
+    bidder_name:    getBidderName(bidderId),
+    join_token:     localState.joinTokens[bidderId],
+    bid:            secret.bid,
+    randomness_hex: secret.randomness_hex,
+    commitment_hex: secret.commitment_hex,
+  };
+}
+
+/** Save a bidder's receipt as a JSON file, through the browser's downloads. */
+function downloadReceipt(bidderId) {
+  const receipt = makeReceipt(bidderId);
+  const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `receipt-${receipt.auction_id.slice(0, 8)}-${bidderId}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Revoked later, not at once: the download may not have started yet.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/**
+ * The receipt in a file's text, checked: well-formed, and its bid and
+ * blinding factor open its commitment. Throws an Error saying what is wrong.
+ */
+function parseReceipt(text) {
+  let receipt;
+  try {
+    receipt = JSON.parse(text);
+  } catch {
+    throw new Error("This file is not a receipt: it is not JSON.");
+  }
+  if (receipt?.type !== RECEIPT_TYPE) throw new Error("This file is not an auction receipt.");
+  if (receipt.version !== RECEIPT_VERSION) {
+    throw new Error(`This receipt has version ${receipt.version}; this page reads version ${RECEIPT_VERSION}.`);
+  }
+  const wellFormed =
+    /^[0-9a-f]{32}$/.test(receipt.auction_id) &&
+    typeof receipt.bidder_id === "string" &&
+    typeof receipt.join_token === "string" &&
+    Number.isSafeInteger(receipt.bid) && receipt.bid >= 0 &&
+    /^[0-9a-f]{64}$/.test(receipt.randomness_hex) &&
+    /^0[23][0-9a-f]{64}$/.test(receipt.commitment_hex);
+  if (!wellFormed) throw new Error("This receipt is damaged: a field is missing or malformed.");
+  // A reveal that does not open the commitment marks the bidder a cheater.
+  if (!window.auctionCrypto.opensCommitment(
+    receipt.commitment_hex, BigInt(receipt.bid), receipt.randomness_hex,
+  )) {
+    throw new Error("This receipt is damaged: its bid and secret do not open its commitment.");
+  }
+  return receipt;
+}
+
+/**
+ * Carry on as the bidder of a receipt (chosen on the setup panel), in the
+ * auction it belongs to, provided that auction recorded this very commitment.
+ */
+async function resumeFromReceipt(file) {
+  const input = document.getElementById("receipt-file");
+  document.getElementById("setup-error").style.display = "none";
+  try {
+    const receipt = parseReceipt(await file.text());
+    const state = await apiFetch(`/api/auctions/${encodeURIComponent(receipt.auction_id)}`);
+    const bidder = state.bidders.find(b => b.bidder_id === receipt.bidder_id);
+    if (!bidder) throw new Error("The auction has no such bidder.");
+    if (bidder.commitment_hex !== receipt.commitment_hex) {
+      throw new Error(`The auction recorded a different commitment for ${bidder.name}.`);
+    }
+
+    // This page now acts for that one bidder only, and is not the organizer.
+    rememberAuction({
+      auction_id: state.auction_id,
+      item_name:  state.item_name,
+      min_bid:    state.min_bid,
+      max_bid:    state.max_bid,
+      bidders:    [{ bidder_id: bidder.bidder_id, join_token: receipt.join_token }],
+    });
+    localState.bidderSecrets[bidder.bidder_id] = {
+      bid:            receipt.bid,
+      randomness_hex: receipt.randomness_hex,
+      commitment_hex: receipt.commitment_hex,
+    };
+    showAuctionView(state.item_name);
+    await refreshState();
+    addPublicLogEntry(`Resumed as ${bidder.name}`, { from: "opening receipt" });
+  } catch (err) {
+    showSetupError(`Could not continue from this receipt: ${err.message}`);
+  } finally {
+    input.value = ""; // so choosing the same file again tries again
+  }
+}
+
+// Leaving the page loses the openings this page holds: ask first while any
+// is still needed for a reveal.
+window.addEventListener("beforeunload", (event) => {
+  const state = localState.serverState;
+  const needed = state && state.state !== "finished" && state.bidders.some(
+    b => localState.bidderSecrets[b.bidder_id] && !hasRevealedBid(b) && !b.missed_deadline,
+  );
+  if (needed) {
+    event.preventDefault();
+    event.returnValue = true; // what older browsers look for instead
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Bidder-side protocol steps. The bid and its blinding factor stay in this
@@ -345,6 +477,7 @@ async function commitBid(bidderId) {
     addPrivateLogEntry(bidderId, `${bidderName} — your secrets`, {
       bid:        fmtBid(bid),
       "blinding r": truncHex(blindingHex) + " (keep private)",
+      "to reveal after a reload": "save the receipt (💾 on the card)",
     });
 
     await refreshState();
@@ -543,6 +676,7 @@ function createBidderCard(bidderId) {
     commitButton: el("button", "btn btn-commit", "Commit"),
     proveButton:  el("button", "btn btn-prove", "ZK Prove"),
     revealButton: el("button", "btn btn-reveal", "Reveal"),
+    receiptButton: el("button", "btn btn-receipt", "💾 Save receipt"),
     note:         el("span", "bidder-note"),
   };
   view.bidInput.type = "number";
@@ -553,6 +687,9 @@ function createBidderCard(bidderId) {
   view.commitButton.addEventListener("click", () => commitBid(bidderId));
   view.proveButton.addEventListener("click", () => proveBid(bidderId));
   view.revealButton.addEventListener("click", () => revealBid(bidderId));
+  view.receiptButton.id = `btn-receipt-${bidderId}`;
+  view.receiptButton.title = "Lets you reveal even if this page is closed or reloaded";
+  view.receiptButton.addEventListener("click", () => downloadReceipt(bidderId));
   view.bidForm.append(view.bidInput, view.commitButton);
   view.error.id = `bidder-error-${bidderId}`;
   view.error.setAttribute("role", "alert");  // announced by screen readers
@@ -580,8 +717,21 @@ function bidderStatus(b) {
   return ["bidder-revealed-bid", fmtBid(b.revealed_bid)];
 }
 
-/** The controls the card shows now: what this bidder can do in this phase. */
+/**
+ * The controls the card shows now: what this bidder can do in this phase,
+ * and saving their receipt while it is still needed.
+ */
 function bidderActions(view, b, state) {
+  // A page resumed from a receipt acts for that bidder only.
+  if (!localState.joinTokens[b.bidder_id]) return [];
+  const actions = stepActions(view, b, state);
+  const needsReceipt = localState.bidderSecrets[b.bidder_id] && !hasRevealedBid(b)
+    && !b.missed_deadline && state.state !== "finished";
+  return needsReceipt ? [...actions, view.receiptButton] : actions;
+}
+
+/** The controls for this phase's step. */
+function stepActions(view, b, state) {
   const hasProved = b.proof_valid !== null && b.proof_valid !== undefined;
   const note = (kind, text) => {
     view.note.className = `bidder-note ${kind}`;
@@ -831,8 +981,10 @@ function closeWinnerModal() {
 async function resetAuction() {
   if (!confirm("Reset the auction? All state will be lost.")) return;
   try {
-    // As the organizer: the auction is deleted on the server too.
-    await apiFetch(auctionUrl(), "DELETE", null, localState.auction.organizer_token);
+    // As the organizer, the auction is deleted on the server too. A page
+    // resumed from a bidder's receipt is no organizer: it just leaves.
+    const organizerToken = localState.auction.organizer_token;
+    if (organizerToken) await apiFetch(auctionUrl(), "DELETE", null, organizerToken);
   } catch (err) {
     // The page resets anyway. If the auction is already gone, so much the better.
     if (err.status !== 404) {
@@ -937,12 +1089,7 @@ async function startDemo() {
   }
 
   rememberAuction(auctionData);
-
-  // Switch to auction view
-  document.getElementById("setup-panel").style.display = "none";
-  document.getElementById("auction-view").style.display = "grid";
-  document.getElementById("phase-indicator").style.display = "flex";
-  document.getElementById("auction-item-label").textContent = auctionData.item_name;
+  showAuctionView(auctionData.item_name);
   document.getElementById("demo-banner").style.display = "flex";
 
   await refreshState();

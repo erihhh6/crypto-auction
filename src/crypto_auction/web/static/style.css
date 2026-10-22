@@ -323,6 +323,18 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   padding: 10px 14px;
 }
 
+.resume {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.resume label { display: block; margin-bottom: 8px; }
+
+.btn-receipt { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); }
+.btn-receipt:hover { color: var(--text-primary); }
+
 /* =====================================================================
    MAIN AUCTION LAYOUT — 3-column grid
    ===================================================================== */

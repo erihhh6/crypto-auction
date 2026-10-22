@@ -279,7 +279,13 @@ trades size for simplicity.
   fixed-length ladder with dummy additions to reduce timing leakage; the
   server only verifies public data.
 - **Secrets live in page memory**: reloading the page loses a bidder's blinding
-  factor, and with it the ability to reveal.
+  factor, and with it the ability to reveal, unless the bidder saved their
+  opening receipt (💾 on their card). Loading it on the setup page carries on
+  as that bidder; the page first checks that it opens the commitment the
+  auction recorded, since a wrong reveal would count as cheating.
+- **Receipts are not encrypted**: a receipt holds the bid, its blinding factor
+  and the join token. Whoever gets it before the reveal learns the bid and can
+  act as the bidder, so it must be kept as private as the bid itself.
 - **Anyone can create auctions**: there are no accounts or rate limits. At
   most 1000 auctions run at once; more are refused (503).
 - **Finished auctions are kept indefinitely**: there is no retention policy

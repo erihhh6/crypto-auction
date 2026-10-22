@@ -45,16 +45,19 @@ const failure = (status, error) => ({ status, body: { success: false, error } })
 const UNREACHABLE = Symbol("unreachable");
 
 /**
- * The page, loaded with a created auction. `routes` ("METHOD path" → JSON
- * body, failure(...) or UNREACHABLE) override the stub server's answers and
- * can be changed while a test runs; `document` overrides fake DOM methods.
+ * The page, loaded with a created auction (unless `created` is false, as for
+ * a page just reloaded). `routes` ("METHOD path" → JSON body, failure(...)
+ * or UNREACHABLE) override the stub server's answers and can be changed
+ * while a test runs; `document` overrides fake DOM methods.
  */
-function loadApp({ routes: overrides = {}, document: documentOverrides = {} } = {}) {
+function loadApp({ routes: overrides = {}, document: documentOverrides = {}, created = true } = {}) {
   const document = fakeDocument(documentOverrides);
   const requests = [];
   const cryptoCalls = [];
   const alerts = [];
   const timers = [];
+  const downloads = [];
+  const windowListeners = {};
   const state = {
     success: true,
     auction_id: CREATED.auction_id,
@@ -89,6 +92,17 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {} } = 
     clearTimeout() {},
     setInterval: () => 0,
     clearInterval() {},
+    // A download: the file's contents, as the page hands them to the browser.
+    Blob: class {
+      constructor(parts, options) {
+        this.text = parts.join("");
+        this.type = options.type;
+      }
+    },
+    URL: {
+      createObjectURL: (blob) => downloads.push(blob) && "blob:download",
+      revokeObjectURL() {},
+    },
     document,
     fetch: async (path, opts) => {
       requests.push({
@@ -103,6 +117,7 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {} } = 
       return { status, json: async () => body };
     },
     window: {
+      addEventListener: (type, listener) => (windowListeners[type] = listener),
       auctionCrypto: {
         commitBid(bid) {
           cryptoCalls.push({ commitBid: bid });
@@ -112,11 +127,14 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {} } = 
           cryptoCalls.push({ proveBid: args });
           return FAKE_PROOF;
         },
+        // Only the stub's own commitment, to 1500, opens.
+        opensCommitment: (commitment, bid, blinding) =>
+          commitment === COMMITMENT && bid === 1500n && blinding === BLINDING,
       },
     },
   });
   vm.runInContext(APP_JS, context);
-  context.rememberAuction(CREATED);
+  if (created) context.rememberAuction(CREATED);
 
   /** Commit a bid the way a user does: type it into the card, press Commit. */
   async function commitThroughCard(bidderId, bid) {
@@ -130,11 +148,26 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {} } = 
   }
   const toasts = () => document.getElementById("toasts").children.map((t) => t.textContent);
 
+  /** Whether leaving the page now would ask the user first. */
+  function leavingAsks() {
+    let asked = false;
+    windowListeners.beforeunload({ preventDefault: () => (asked = true) });
+    return asked;
+  }
+  /** The text of the setup panel's error, or null if none is shown. */
+  function setupError() {
+    const error = document.getElementById("setup-error");
+    return error.style.display === "block" ? error.textContent : null;
+  }
+
   return {
-    app: context, document, requests, cryptoCalls, alerts, timers, state, routes,
-    commitThroughCard, cardError, toasts,
+    app: context, document, requests, cryptoCalls, alerts, timers, state, routes, downloads,
+    commitThroughCard, cardError, toasts, leavingAsks, setupError,
   };
 }
+
+/** A file as the file picker gives it. */
+const fileWith = (text) => ({ text: async () => text });
 
 const sentTo = (requests, path) => requests.filter((r) => r.path === path).map((r) => r.body);
 
@@ -325,6 +358,104 @@ test("reset says nothing when the auction was already gone", async () => {
   });
   await app.resetAuction();
   assert.deepEqual(toasts(), []);
+});
+
+test("a receipt saved before a reload lets the bidder carry on and reveal", async () => {
+  // Alice commits, and saves her receipt.
+  const before = loadApp();
+  await before.app.refreshState();
+  await before.commitThroughCard("bidder_0", 1500);
+  await before.document.getElementById("btn-receipt-bidder_0").click();
+  const [file] = before.downloads;
+  assert.equal(file.type, "application/json");
+  const receipt = JSON.parse(file.text);
+  assert.deepEqual(
+    { ...receipt, note: undefined },
+    {
+      type: "crypto-auction/opening-receipt",
+      version: 1,
+      note: undefined,
+      auction_id: CREATED.auction_id,
+      item_name: "x",
+      bidder_id: "bidder_0",
+      bidder_name: "Alice",
+      join_token: TOKENS.bidder_0,
+      bid: 1500,
+      randomness_hex: BLINDING,
+      commitment_hex: COMMITMENT,
+    },
+  );
+
+  // The page is reloaded: it knows nothing. Meanwhile the auction has moved
+  // on to the reveal.
+  const after = loadApp({ created: false });
+  Object.assign(after.state, { state: "proved" });
+  Object.assign(after.state.bidders[0], { commitment_hex: COMMITMENT, proof_valid: true });
+  Object.assign(after.state.bidders[1], { commitment_hex: "02" + "dd".repeat(32), proof_valid: true });
+  await after.app.resumeFromReceipt(fileWith(file.text));
+
+  assert.equal(after.setupError(), null);
+  assert.equal(after.document.getElementById("setup-panel").style.display, "none");
+  // It acts for Alice only: Bob's card offers nothing.
+  assert.equal(after.document.getElementById("btn-reveal-bidder_1"), null);
+  await after.document.getElementById("btn-reveal-bidder_0").click();
+  const [reveal] = after.requests.filter((r) => r.path === `${AUCTION}/reveal`);
+  assert.equal(reveal.authorization, `Bearer ${TOKENS.bidder_0}`);
+  assert.deepEqual(reveal.body, { bid: 1500, randomness_hex: BLINDING });
+
+  // A bidder is not the organizer: leaving does not try to delete the auction.
+  await after.app.resetAuction();
+  assert.deepEqual(after.requests.filter((r) => r.method === "DELETE"), []);
+});
+
+test("a receipt for another commitment than the auction's is refused", async () => {
+  const { app, state, setupError, document } = loadApp({ created: false });
+  state.bidders[0].commitment_hex = "02" + "dd".repeat(32); // Alice committed to something else
+  const receipt = {
+    type: "crypto-auction/opening-receipt", version: 1, auction_id: CREATED.auction_id,
+    bidder_id: "bidder_0", join_token: TOKENS.bidder_0, bid: 1500,
+    randomness_hex: BLINDING, commitment_hex: COMMITMENT,
+  };
+  await app.resumeFromReceipt(fileWith(JSON.stringify(receipt)));
+  assert.equal(
+    setupError(),
+    "Could not continue from this receipt: The auction recorded a different commitment for Alice.",
+  );
+  assert.notEqual(document.getElementById("setup-panel").style.display, "none");
+});
+
+test("files that are not sound receipts are refused before anything is asked", async () => {
+  const valid = {
+    type: "crypto-auction/opening-receipt", version: 1, auction_id: CREATED.auction_id,
+    bidder_id: "bidder_0", join_token: TOKENS.bidder_0, bid: 1500,
+    randomness_hex: BLINDING, commitment_hex: COMMITMENT,
+  };
+  const files = {
+    "{not json": "it is not JSON.",
+    [JSON.stringify({ hello: "world" })]: "This file is not an auction receipt.",
+    [JSON.stringify({ ...valid, version: 2 })]: "this page reads version 1.",
+    [JSON.stringify({ ...valid, join_token: undefined })]: "a field is missing or malformed.",
+    [JSON.stringify({ ...valid, bid: 1500.5 })]: "a field is missing or malformed.",
+    // Revealing this would mark Alice a cheater.
+    [JSON.stringify({ ...valid, bid: 1501 })]: "its bid and secret do not open its commitment.",
+  };
+  for (const [text, reason] of Object.entries(files)) {
+    const { app, requests, setupError } = loadApp({ created: false });
+    await app.resumeFromReceipt(fileWith(text));
+    assert.ok(setupError()?.endsWith(reason), `${text}: ${setupError()}`);
+    assert.deepEqual(requests, []);
+  }
+});
+
+test("leaving the page asks first while an opening is still needed", async () => {
+  const { app, state, leavingAsks, commitThroughCard } = loadApp();
+  await app.refreshState();
+  assert.equal(leavingAsks(), false, "nothing to lose yet");
+  await commitThroughCard("bidder_0", 1500);
+  assert.equal(leavingAsks(), true, "Alice's opening would be lost");
+  state.state = "finished";
+  await app.refreshState();
+  assert.equal(leavingAsks(), false, "the auction is over");
 });
 
 test("the setup buttons work again once a demo has started", async () => {

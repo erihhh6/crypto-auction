@@ -24,8 +24,11 @@ const ESCAPED = "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;";
 
 function loadApp(overrides = {}) {
   const document = fakeDocument(overrides);
-  const app = vm.createContext({ document, console });
+  const app = vm.createContext({ document, console, window: { addEventListener() {} } });
   vm.runInContext(APP_JS, app);
+  // As on the organizer's page: it holds every bidder's join token, so it
+  // offers each bidder their controls.
+  app.rememberAuction({ auction_id: "ab".repeat(16), bidders: joinTokens(["bidder_0", "bidder_1"]) });
   return {
     app,
     document,
@@ -41,6 +44,8 @@ function loadApp(overrides = {}) {
     },
   };
 }
+
+const joinTokens = (ids) => ids.map((id) => ({ bidder_id: id, join_token: `${id}-token` }));
 
 function assertEscaped(html) {
   assert.ok(!html.includes("<img"), `unescaped markup in: ${html}`);
@@ -126,7 +131,7 @@ test("a new auction starts from fresh cards", () => {
   document.getElementById("bid-input-bidder_0").value = "1234";
 
   // Bidder ids repeat across auctions; what was typed for one must not carry over.
-  app.rememberAuction({ auction_id: "cd".repeat(16), bidders: [{ bidder_id: "bidder_0" }] });
+  app.rememberAuction({ auction_id: "cd".repeat(16), bidders: joinTokens(["bidder_0"]) });
   app.renderBidderCards(auctionState({ bidders: [bidder("bidder_0", "Carol")] }));
   assert.equal(document.getElementById("bid-input-bidder_0").value, "");
 });

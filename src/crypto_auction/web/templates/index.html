@@ -83,6 +83,15 @@
         <button id="btn-demo" onclick="startDemo()">▶ Watch Demo</button>
       </div>
       <div id="setup-error" class="error-msg" style="display:none"></div>
+
+      <div class="resume">
+        <label for="receipt-file">
+          Reloaded the page during an auction? Continue as a bidder with the
+          receipt saved for them:
+        </label>
+        <input id="receipt-file" type="file" accept=".json,application/json"
+               onchange="if (this.files.length) resumeFromReceipt(this.files[0])" />
+      </div>
     </div>
   </section>
 

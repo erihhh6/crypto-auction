@@ -184,6 +184,19 @@ export function commitBid(bid) {
   };
 }
 
+/**
+ * Whether (bid, blindingHex) opens commitmentHex: the check the server makes at
+ * the reveal (pedersen.verify), run before trusting a saved opening.
+ */
+export function opensCommitment(commitmentHex, bid, blindingHex) {
+  if (!/^[0-9a-f]{64}$/.test(blindingHex)) return false;
+  try {
+    return encodePoint(commitWith(bid, BigInt("0x" + blindingHex))) === commitmentHex;
+  } catch {
+    return false; // a bid or blinding factor out of range opens nothing
+  }
+}
+
 /** Prove, for this auction and bidder, that the committed bid lies in [minBid, maxBid]. */
 export function proveBid({ bid, blindingHex, commitmentHex, minBid, maxBid, auctionId, bidderId }) {
   return proveRange(
@@ -197,5 +210,5 @@ export function proveBid({ bid, blindingHex, commitmentHex, minBid, maxBid, auct
 }
 
 if (typeof window !== "undefined") {
-  window.auctionCrypto = Object.freeze({ commitBid, proveBid });
+  window.auctionCrypto = Object.freeze({ commitBid, proveBid, opensCommitment });
 }
