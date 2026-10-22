@@ -1,13 +1,15 @@
 // Privacy and identity regression tests for the page's protocol flow
 // (static/app.js): what each request sends to the server, and as whom. Runs
-// app.js in a VM with a fake DOM, a recording fetch() and a stub
-// window.auctionCrypto; the real cryptography is covered by crypto.test.mjs
-// and tests/test_browser_interop.py.
+// app.js in a VM with a fake DOM (fake-dom.mjs), a recording fetch() and a
+// stub window.auctionCrypto; the real cryptography is covered by
+// crypto.test.mjs and tests/test_browser_interop.py.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+
+import { fakeDocument } from "./fake-dom.mjs";
 
 const APP_JS = readFileSync(
   new URL("../../src/crypto_auction/web/static/app.js", import.meta.url),
@@ -35,23 +37,8 @@ const CREATED = {
 };
 const AUCTION = `/api/auctions/${CREATED.auction_id}`;
 
-function fakeElement(value = "") {
-  return {
-    value,
-    innerHTML: "",
-    textContent: "",
-    disabled: false,
-    style: {},
-    classList: { toggle() {} },
-    prepend() {},
-  };
-}
-
 function loadApp() {
-  const elements = new Map([
-    ["bid-input-bidder_0", fakeElement("1500")],
-    ["bid-input-bidder_1", fakeElement("1800")],
-  ]);
+  const document = fakeDocument();
   const requests = [];
   const cryptoCalls = [];
   const alerts = [];
@@ -86,14 +73,7 @@ function loadApp() {
     // Recorded, never run: the tests decide what time it is.
     setTimeout: (callback, delay) => timers.push({ callback, delay }),
     clearTimeout() {},
-    document: {
-      getElementById(id) {
-        if (!elements.has(id)) elements.set(id, fakeElement());
-        return elements.get(id);
-      },
-      createElement: () => fakeElement(),
-      querySelectorAll: () => [],
-    },
+    document,
     fetch: async (path, opts) => {
       requests.push({
         method: opts.method,
@@ -118,15 +98,23 @@ function loadApp() {
   });
   vm.runInContext(APP_JS, context);
   context.rememberAuction(CREATED);
-  return { app: context, requests, cryptoCalls, alerts, timers, state };
+  /** Commit a bid the way a user does: type it into the card, press Commit. */
+  async function commitThroughCard(bidderId, bid) {
+    document.getElementById(`bid-input-${bidderId}`).value = String(bid);
+    await document.getElementById(`btn-commit-${bidderId}`).click();
+  }
+  return { app: context, requests, cryptoCalls, alerts, timers, state, commitThroughCard };
 }
 
 const sentTo = (requests, path) => requests.filter((r) => r.path === path).map((r) => r.body);
 
 test("the bid and its blinding factor reach the server only at the reveal", async () => {
-  const { app, requests, cryptoCalls, alerts } = loadApp();
+  const { app, requests, cryptoCalls, alerts, commitThroughCard } = loadApp();
 
-  await app.commitBid("bidder_0");
+  await app.refreshState(); // the cards, as the page first shows them
+  await commitThroughCard("bidder_0", 1500);
+  // The stub server stays in the commit phase, so the later steps are
+  // called directly rather than through their (hidden) buttons.
   await app.proveBid("bidder_0");
   await app.revealBid("bidder_0");
   assert.deepEqual(alerts, []);
@@ -179,10 +167,11 @@ test("the page refreshes when the current phase's deadline passes, on the server
 });
 
 test("each bidder's requests carry that bidder's join token, and no others do", async () => {
-  const { app, requests, alerts } = loadApp();
+  const { app, requests, alerts, commitThroughCard } = loadApp();
 
-  await app.commitBid("bidder_0");
-  await app.commitBid("bidder_1");
+  await app.refreshState();
+  await commitThroughCard("bidder_0", 1500);
+  await commitThroughCard("bidder_1", 1800);
   await app.proveBid("bidder_1");
   await app.revealBid("bidder_1");
   assert.deepEqual(alerts, []);
@@ -191,6 +180,7 @@ test("each bidder's requests carry that bidder's join token, and no others do", 
   assert.deepEqual(
     requests.map(({ method, path, authorization }) => [method, path, authorization]),
     [
+      ["GET", AUCTION, undefined],
       ["POST", `${AUCTION}/commit`, `Bearer ${TOKENS.bidder_0}`],
       ["GET", AUCTION, undefined],
       ["POST", `${AUCTION}/commit`, `Bearer ${TOKENS.bidder_1}`],

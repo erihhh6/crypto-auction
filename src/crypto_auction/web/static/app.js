@@ -192,6 +192,10 @@ function rememberAuction(data) {
   localState.auction = data;
   localState.joinTokens = Object.fromEntries(data.bidders.map(b => [b.bidder_id, b.join_token]));
   localState.bidderSecrets = {};
+  // Bidder ids repeat across auctions: start from fresh cards, not the last
+  // auction's (with whatever was typed into them).
+  bidderCards.clear();
+  document.getElementById("bidder-cards").replaceChildren();
 }
 
 // ---------------------------------------------------------------------------
@@ -404,118 +408,162 @@ function renderPhaseIndicator(state) {
 }
 
 // ---------------------------------------------------------------------------
-// Bidder cards
+// Bidder cards. Each card is built once per auction and then updated in
+// place, so a bid being typed (not committed yet) and the focus survive every
+// refresh. Text goes in as textContent, so it is never parsed as HTML.
 // ---------------------------------------------------------------------------
 
-function renderBidderCards(state) {
-  const container = document.getElementById("bidder-cards");
-  const phase     = state.state;
+// bidder_id → the elements of that bidder's card; emptied for a new auction.
+const bidderCards = new Map();
 
-  container.innerHTML = "";
-  state.bidders.forEach(b => {
-    const hasCommitted = !!b.commitment_hex;
-    const hasProved    = b.proof_valid !== null && b.proof_valid !== undefined;
-    const hasRevealed  = hasRevealedBid(b);
-    const isWinner     = state.winner && state.winner.bidder_id === b.bidder_id;
-    const isCheater    = hasRevealed && b.commitment_verified === false;
-    const secret       = localState.bidderSecrets[b.bidder_id];
+/** A new element with a class and, optionally, text. */
+function el(tag, className, text = "") {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
 
-    // Card CSS classes
-    let cardClass = "bidder-card";
-    if (isWinner)        cardClass += " winner";
-    else if (b.missed_deadline) cardClass += " missed";
-    else if (hasRevealed) cardClass += " revealed";
-    else if (hasProved)   cardClass += " proved";
-    else if (hasCommitted) cardClass += " committed";
-
-    // Phase badges
-    const commitBadge = `<span class="phase-badge ${hasCommitted ? "done commit" : ""}">COMMIT</span>`;
-    const proveBadge  = `<span class="phase-badge ${hasProved ? (b.proof_valid ? "done prove" : "invalid") : ""}">PROVE</span>`;
-    const revealBadge = `<span class="phase-badge ${hasRevealed ? (b.commitment_verified ? "done reveal" : "invalid") : ""}">REVEAL</span>`;
-
-    // Commitment hash line
-    const commitLine = hasCommitted
-      ? `<div class="bidder-commitment-hash">C: ${escapeHtml(truncHex(b.commitment_hex))}</div>`
-      : "";
-
-    // Revealed bid
-    let revealedLine = "";
-    if (hasRevealed && b.commitment_verified) {
-      revealedLine = b.revealed_bid === undefined
-        ? `<div class="bidder-revealed-pending">✓ Revealed — bids are shown once everyone has</div>`
-        : `<div class="bidder-revealed-bid">${fmtBid(b.revealed_bid)}</div>`;
-    } else if (hasRevealed && !b.commitment_verified) {
-      revealedLine = `<div style="color:var(--red);font-size:12px;margin-bottom:6px;">⚠ Cheater detected — bid invalid</div>`;
-    }
-
-    // A missed deadline: no further part, so no buttons follow either
-    const missedLine = b.missed_deadline
-      ? `<div class="bidder-missed">⏱ Missed the ${escapeHtml(b.missed_deadline)} deadline — out of the auction</div>`
-      : "";
-
-    // Winner badge
-    const winnerBadge = isWinner
-      ? `<div class="bidder-winner-badge">🏆 Winner!</div>`
-      : "";
-
-    // Action buttons
-    let actionHTML = "";
-
-    if (phase === "open") {
-      if (!hasCommitted) {
-        actionHTML = `
-          <div class="bidder-bid-input">
-            <input id="bid-input-${b.bidder_id}" type="number"
-              min="${state.min_bid}" max="${state.max_bid}"
-              placeholder="${state.min_bid}–${state.max_bid}"
-              style="width:100px" />
-            <button id="btn-commit-${b.bidder_id}"
-              class="btn btn-commit"
-              onclick="commitBid('${b.bidder_id}')">Commit</button>
-          </div>`;
-      } else {
-        actionHTML = `<span style="font-size:11px;color:var(--color-commit)">✓ Committed</span>`;
-      }
-    } else if (phase === "committed") {
-      if (hasCommitted && !hasProved) {
-        const hasSecret = !!localState.bidderSecrets[b.bidder_id];
-        actionHTML = `
-          <button id="btn-prove-${b.bidder_id}"
-            class="btn btn-prove"
-            ${hasSecret ? "" : "disabled title='Commit this bidder in this browser session first'"}
-            onclick="proveBid('${b.bidder_id}')">ZK Prove</button>
-          ${!hasSecret ? '<span style="font-size:10px;color:var(--text-dim);display:block;margin-top:4px">Secret not in memory</span>' : ""}`;
-      } else if (hasProved) {
-        actionHTML = `<span style="font-size:11px;color:var(--color-prove)">✓ Proved (${b.proof_valid ? "valid" : "invalid"})</span>`;
-      }
-    } else if (phase === "proved") {
-      if (hasProved && !hasRevealed) {
-        const hasSecret = !!localState.bidderSecrets[b.bidder_id];
-        actionHTML = `
-          <button id="btn-reveal-${b.bidder_id}"
-            class="btn btn-reveal"
-            ${hasSecret ? "" : "disabled title='Secret not in memory'"}
-            onclick="revealBid('${b.bidder_id}')">Reveal</button>
-          ${!hasSecret ? '<span style="font-size:10px;color:var(--text-dim);display:block;margin-top:4px">Secret not in memory</span>' : ""}`;
-      }
-    }
-
-    container.innerHTML += `
-      <div class="${cardClass}">
-        <div class="bidder-card-name">
-          <div class="bidder-avatar">👤</div>
-          ${escapeHtml(b.name)}
-        </div>
-        <div class="bidder-phases">
-          ${commitBadge}${proveBadge}${revealBadge}
-        </div>
-        ${commitLine}
-        ${revealedLine}
-        ${missedLine}
-        ${winnerBadge}
-        ${actionHTML ? `<div class="bidder-actions">${actionHTML}</div>` : ""}
-      </div>`;
+/**
+ * Give node exactly these children, in this order, leaving those already in
+ * place untouched: detaching an element, even briefly, drops its focus.
+ */
+function setChildren(node, children) {
+  children.forEach((child, i) => {
+    if (node.children[i] !== child) node.insertBefore(child, node.children[i] ?? null);
   });
+  while (node.children.length > children.length) node.lastElementChild.remove();
+}
+
+/** A bidder's card: its elements, created once, which updateBidderCard fills in. */
+function createBidderCard(bidderId) {
+  const view = {
+    card:         el("div", "bidder-card"),
+    name:         el("span", "bidder-name"),
+    badges: {
+      commit:     el("span", "phase-badge", "COMMIT"),
+      prove:      el("span", "phase-badge", "PROVE"),
+      reveal:     el("span", "phase-badge", "REVEAL"),
+    },
+    hash:         el("div", "bidder-commitment-hash"),
+    status:       el("div", ""),
+    winner:       el("div", "bidder-winner-badge", "🏆 Winner!"),
+    actions:      el("div", "bidder-actions"),
+    // The controls last as long as the card; only which ones show changes.
+    bidForm:      el("div", "bidder-bid-input"),
+    bidInput:     el("input", ""),
+    commitButton: el("button", "btn btn-commit", "Commit"),
+    proveButton:  el("button", "btn btn-prove", "ZK Prove"),
+    revealButton: el("button", "btn btn-reveal", "Reveal"),
+    note:         el("span", "bidder-note"),
+  };
+  view.bidInput.type = "number";
+  view.bidInput.id = `bid-input-${bidderId}`;
+  view.commitButton.id = `btn-commit-${bidderId}`;
+  view.proveButton.id = `btn-prove-${bidderId}`;
+  view.revealButton.id = `btn-reveal-${bidderId}`;
+  view.commitButton.addEventListener("click", () => commitBid(bidderId));
+  view.proveButton.addEventListener("click", () => proveBid(bidderId));
+  view.revealButton.addEventListener("click", () => revealBid(bidderId));
+  view.bidForm.append(view.bidInput, view.commitButton);
+
+  const name = el("div", "bidder-card-name");
+  name.append(el("div", "bidder-avatar", "👤"), view.name);
+  const phases = el("div", "bidder-phases");
+  phases.append(view.badges.commit, view.badges.prove, view.badges.reveal);
+  view.card.append(name, phases, view.hash, view.status, view.winner, view.actions);
+  return view;
+}
+
+/** The card's status line, as [class, text]; no text when there is nothing to say. */
+function bidderStatus(b) {
+  if (b.missed_deadline) {
+    return ["bidder-missed", `⏱ Missed the ${b.missed_deadline} deadline — out of the auction`];
+  }
+  if (!hasRevealedBid(b)) return ["", ""];
+  if (!b.commitment_verified) return ["bidder-cheater", "⚠ Cheater detected — bid invalid"];
+  if (b.revealed_bid === undefined) {
+    return ["bidder-revealed-pending", "✓ Revealed — bids are shown once everyone has"];
+  }
+  return ["bidder-revealed-bid", fmtBid(b.revealed_bid)];
+}
+
+/** The controls the card shows now: what this bidder can do in this phase. */
+function bidderActions(view, b, state) {
+  const hasProved = b.proof_valid !== null && b.proof_valid !== undefined;
+  const note = (kind, text) => {
+    view.note.className = `bidder-note ${kind}`;
+    view.note.textContent = text;
+    return view.note;
+  };
+  // Only ever disabled here, never enabled: a button may be disabled because
+  // its request is in flight, and commitBid & co. re-enable it themselves.
+  const stepButton = (button, hint) => {
+    if (localState.bidderSecrets[b.bidder_id]) return [button];
+    button.disabled = true;
+    button.title = hint;
+    return [button, note("dim", "Secret not in memory")];
+  };
+
+  if (state.state === "open") {
+    if (b.commitment_hex) return [note("commit", "✓ Committed")];
+    view.bidInput.min = state.min_bid;
+    view.bidInput.max = state.max_bid;
+    view.bidInput.placeholder = `${state.min_bid}–${state.max_bid}`;
+    return [view.bidForm];
+  }
+  if (state.state === "committed") {
+    if (hasProved) return [note("prove", `✓ Proved (${b.proof_valid ? "valid" : "invalid"})`)];
+    if (!b.commitment_hex) return [];  // missed the commit deadline
+    return stepButton(view.proveButton, "Commit this bidder in this browser session first");
+  }
+  if (state.state === "proved" && hasProved && !hasRevealedBid(b)) {
+    return stepButton(view.revealButton, "Secret not in memory");
+  }
+  return [];
+}
+
+function updateBidderCard(view, b, state) {
+  const hasCommitted = !!b.commitment_hex;
+  const hasProved    = b.proof_valid !== null && b.proof_valid !== undefined;
+  const hasRevealed  = hasRevealedBid(b);
+  const isWinner     = !!state.winner && state.winner.bidder_id === b.bidder_id;
+
+  let cardClass = "bidder-card";
+  if (isWinner)               cardClass += " winner";
+  else if (b.missed_deadline) cardClass += " missed";
+  else if (hasRevealed)       cardClass += " revealed";
+  else if (hasProved)         cardClass += " proved";
+  else if (hasCommitted)      cardClass += " committed";
+  view.card.className = cardClass;
+  view.name.textContent = b.name;
+
+  view.badges.commit.className = `phase-badge ${hasCommitted ? "done commit" : ""}`;
+  view.badges.prove.className  = `phase-badge ${hasProved ? (b.proof_valid ? "done prove" : "invalid") : ""}`;
+  view.badges.reveal.className = `phase-badge ${hasRevealed ? (b.commitment_verified ? "done reveal" : "invalid") : ""}`;
+
+  view.hash.textContent = hasCommitted ? `C: ${truncHex(b.commitment_hex)}` : "";
+  view.hash.hidden = !hasCommitted;
+
+  const [statusClass, statusText] = bidderStatus(b);
+  view.status.className = statusClass;
+  view.status.textContent = statusText;
+  view.status.hidden = !statusText;
+
+  view.winner.hidden = !isWinner;
+
+  setChildren(view.actions, bidderActions(view, b, state));
+  view.actions.hidden = view.actions.children.length === 0;
+}
+
+function renderBidderCards(state) {
+  const cards = state.bidders.map(b => {
+    if (!bidderCards.has(b.bidder_id)) bidderCards.set(b.bidder_id, createBidderCard(b.bidder_id));
+    const view = bidderCards.get(b.bidder_id);
+    updateBidderCard(view, b, state);
+    return view.card;
+  });
+  setChildren(document.getElementById("bidder-cards"), cards);
 }
 
 // ---------------------------------------------------------------------------

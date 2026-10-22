@@ -198,7 +198,8 @@ crypto-auction/
 │               └── vendor/   # Pinned third-party code (@noble/secp256k1) and provenance
 ├── tests/
 │   ├── js/
-│   │   ├── render.test.mjs   # Frontend rendering (HTML escaping, proof summary)
+│   │   ├── render.test.mjs   # Rendering: cards updated in place, escaping, phase indicator
+│   │   ├── fake-dom.mjs      # Minimal DOM to run app.js under Node, no npm install
 │   │   ├── app-flow.test.mjs # What each request sends, and as whom: no bid before the reveal
 │   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
 │   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests

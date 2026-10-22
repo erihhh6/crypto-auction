@@ -1,15 +1,17 @@
 // Rendering tests for the frontend script (src/crypto_auction/web/static/app.js),
 // run with Node's built-in test runner:
-//   node --test tests/js/
+//   node --test "tests/js/*.test.mjs"
 //
 // app.js is a plain browser script that only touches the DOM when its
-// functions run, so it can be loaded into a VM context with a minimal fake
-// `document`, and its renderers checked on the HTML strings they produce.
+// functions run, so it can be loaded into a VM context with a fake document
+// (fake-dom.mjs), and what its renderers build checked directly.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
+
+import { fakeDocument } from "./fake-dom.mjs";
 
 const APP_JS = readFileSync(
   new URL("../../src/crypto_auction/web/static/app.js", import.meta.url),
@@ -20,31 +22,24 @@ const APP_JS = readFileSync(
 const PAYLOAD = '<img src=x onerror="alert(1)">';
 const ESCAPED = "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;";
 
-function fakeElement() {
-  return {
-    innerHTML: "",
-    textContent: "",
-    className: "",
-    style: {},
-    classList: { toggle() {} },
-    prepend() {},
-  };
-}
-
 function loadApp(overrides = {}) {
-  const elements = new Map();
-  const document = {
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, fakeElement());
-      return elements.get(id);
-    },
-    createElement: () => fakeElement(),
-    querySelectorAll: () => [],
-    ...overrides,
-  };
+  const document = fakeDocument(overrides);
   const app = vm.createContext({ document, console });
   vm.runInContext(APP_JS, app);
-  return { app, html: (id) => elements.get(id).innerHTML };
+  return {
+    app,
+    document,
+    html: (id) => document.getElementById(id).innerHTML,
+    text: (id) => document.getElementById(id).textContent,
+    // On the page and not hidden: what the user can see and use.
+    shown(id) {
+      for (let node = document.getElementById(id); node; node = node.parentNode) {
+        if (node.hidden) return false;
+        if (node === document.body) return true;
+      }
+      return false;
+    },
+  };
 }
 
 function assertEscaped(html) {
@@ -80,6 +75,15 @@ function auctionState(overrides = {}) {
   };
 }
 
+const bidder = (id, name, fields = {}) => ({
+  bidder_id: id,
+  name,
+  commitment_hex: null,
+  proof_valid: null,
+  commitment_verified: null,
+  ...fields,
+});
+
 test("escapeHtml escapes every HTML-significant character", () => {
   const { app } = loadApp();
   assert.equal(
@@ -88,10 +92,43 @@ test("escapeHtml escapes every HTML-significant character", () => {
   );
 });
 
-test("bidder cards escape bidder names", () => {
-  const { app, html } = loadApp();
+test("bidder cards put names in as text, never as markup", () => {
+  const { app, document } = loadApp();
   app.renderBidderCards(auctionState());
-  assertEscaped(html("bidder-cards"));
+  const container = document.getElementById("bidder-cards");
+  const nodes = [container, ...container.descendants()];
+  const name = nodes.find((node) => node.className === "bidder-name");
+  assert.equal(name.textContent, PAYLOAD); // shown exactly as typed
+  assert.deepEqual(nodes.filter((node) => node.innerHTMLWrites > 0), []);
+});
+
+test("a bid being typed, and the focus, survive a refresh", () => {
+  const { app, document } = loadApp();
+  const alice = bidder("bidder_0", "Alice");
+  const bob = bidder("bidder_1", "Bob");
+  app.renderBidderCards(auctionState({ bidders: [alice, bob] }));
+  const input = document.getElementById("bid-input-bidder_0");
+  input.value = "1234";
+  input.focus();
+
+  // Bob commits meanwhile, and the page refreshes.
+  const committed = { ...bob, commitment_hex: "02" + "aa".repeat(32) };
+  app.renderBidderCards(auctionState({ bidders: [alice, committed] }));
+  assert.equal(document.getElementById("bid-input-bidder_0"), input);
+  assert.equal(input.value, "1234");
+  assert.equal(document.activeElement, input);
+  assert.equal(document.getElementById("bid-input-bidder_1"), null, "Bob has committed");
+});
+
+test("a new auction starts from fresh cards", () => {
+  const { app, document } = loadApp();
+  app.renderBidderCards(auctionState({ bidders: [bidder("bidder_0", "Alice")] }));
+  document.getElementById("bid-input-bidder_0").value = "1234";
+
+  // Bidder ids repeat across auctions; what was typed for one must not carry over.
+  app.rememberAuction({ auction_id: "cd".repeat(16), bidders: [{ bidder_id: "bidder_0" }] });
+  app.renderBidderCards(auctionState({ bidders: [bidder("bidder_0", "Carol")] }));
+  assert.equal(document.getElementById("bid-input-bidder_0").value, "");
 });
 
 test("actions panel escapes the item and winner names", () => {
@@ -107,42 +144,40 @@ test("actions panel escapes the item and winner names", () => {
 test("during the reveal phase, a bidder who revealed is shown as revealed", () => {
   // Public state after Alice revealed: the server publishes that she did
   // (commitment_verified), but no bids until the auction is finished.
-  const { app, html } = loadApp();
+  const { app, html, text, shown } = loadApp();
   const proved = { commitment_hex: "02" + "aa".repeat(32), proof_valid: true };
   const state = auctionState({
     state: "proved",
     bidders: [
-      { bidder_id: "bidder_0", name: "Alice", ...proved, commitment_verified: true },
-      { bidder_id: "bidder_1", name: "Bob", ...proved, commitment_verified: null },
+      bidder("bidder_0", "Alice", { ...proved, commitment_verified: true }),
+      bidder("bidder_1", "Bob", proved),
     ],
   });
 
   app.renderBidderCards(state);
-  const cards = html("bidder-cards");
-  assert.ok(!cards.includes("btn-reveal-bidder_0"), "Alice must not be offered a second reveal");
-  assert.ok(cards.includes("btn-reveal-bidder_1"), "Bob has yet to reveal");
-  assert.ok(cards.includes("✓ Revealed"));
-  assert.ok(!cards.includes("NaN"), "no bid is known yet, so none is shown");
+  assert.ok(!shown("btn-reveal-bidder_0"), "Alice must not be offered a second reveal");
+  assert.ok(shown("btn-reveal-bidder_1"), "Bob has yet to reveal");
+  assert.ok(text("bidder-cards").includes("✓ Revealed"));
+  assert.ok(!text("bidder-cards").includes("NaN"), "no bid is known yet, so none is shown");
 
   app.renderActionsPanel(state);
   assert.match(html("actions-content"), /Revealed: 1 \/ 2/);
 });
 
 test("a bidder who missed a deadline is shown as out, and progress counts the others", () => {
-  const { app, html } = loadApp();
+  const { app, html, text, shown } = loadApp();
   const state = auctionState({
     state: "committed",
     bidders: [
-      { bidder_id: "bidder_0", name: "Alice", commitment_hex: "02" + "aa".repeat(32), proof_valid: null },
-      { bidder_id: "bidder_1", name: "Bob", commitment_hex: null, missed_deadline: "commit" },
+      bidder("bidder_0", "Alice", { commitment_hex: "02" + "aa".repeat(32) }),
+      bidder("bidder_1", "Bob", { missed_deadline: "commit" }),
     ],
   });
 
   app.renderBidderCards(state);
-  const cards = html("bidder-cards");
-  assert.ok(cards.includes("Missed the commit deadline"));
-  assert.ok(cards.includes("btn-prove-bidder_0"), "Alice can still prove");
-  assert.ok(!cards.includes("btn-prove-bidder_1"), "Bob takes no further part");
+  assert.ok(text("bidder-cards").includes("Missed the commit deadline"));
+  assert.ok(shown("btn-prove-bidder_0"), "Alice can still prove");
+  assert.ok(!shown("btn-prove-bidder_1"), "Bob takes no further part");
 
   app.renderActionsPanel(state);
   const panel = html("actions-content");

@@ -35,6 +35,9 @@
 /* ---- Reset ---- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The hidden attribute must win over the display of classes such as .bidder-winner-badge. */
+[hidden] { display: none !important; }
+
 html { font-size: 14px; }
 
 body {
@@ -444,6 +447,17 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   color: var(--text-dim);
   margin-bottom: 8px;
 }
+
+.bidder-cheater {
+  font-size: 12px;
+  color: var(--red);
+  margin-bottom: 6px;
+}
+
+.bidder-note        { font-size: 11px; }
+.bidder-note.commit { color: var(--color-commit); }
+.bidder-note.prove  { color: var(--color-prove); }
+.bidder-note.dim    { font-size: 10px; color: var(--text-dim); flex-basis: 100%; }
 
 .bidder-winner-badge {
   font-size: 11px;
