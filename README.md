@@ -355,7 +355,6 @@ bids public once the auction is over):
   whether a proof was valid rests on the server's word.
 - **A single server**: a production design would distribute the auctioneer's
   role (multi-party computation), so that no one party could even be curious.
-- **The demo GIF predates** deadlines, join links and receipts.
 
 ---
 
