@@ -200,7 +200,7 @@ crypto-auction/
 │   ├── js/
 │   │   ├── render.test.mjs   # Rendering: cards updated in place, escaping, phase indicator
 │   │   ├── fake-dom.mjs      # Minimal DOM to run app.js under Node, no npm install
-│   │   ├── app-flow.test.mjs # What each request sends, and as whom: no bid before the reveal
+│   │   ├── app-flow.test.mjs # What each request sends, and as whom; how failures are shown
 │   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
 │   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests
 │   ├── support.py            # Shared helpers (known_bug marker, fake clock, temporary database)

@@ -73,17 +73,76 @@ function timestamp() {
 }
 
 /**
- * Safe fetch with JSON body, returns parsed JSON or throws. A token (a
- * bidder's join token, or the organizer token) authenticates the request.
+ * Safe fetch with JSON body: returns the parsed JSON, or throws an Error
+ * whose message can be shown to the user, with the HTTP status as
+ * error.status (0 when the server could not be reached). A token (a bidder's
+ * join token, or the organizer token) authenticates the request.
  */
 async function apiFetch(path, method = "GET", body = null, token = null) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
   if (token !== null) opts.headers.Authorization = `Bearer ${token}`;
   if (body !== null) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
-  const json = await res.json();
-  if (!json.success) throw new Error(json.error || "Unknown error");
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch {
+    throw Object.assign(new Error("The server could not be reached."), { status: 0 });
+  }
+  // Not JSON at all, e.g. a proxy's error page: say so rather than "Unexpected token <".
+  const json = await res.json().catch(() => null);
+  if (!json?.success) {
+    const message = json?.error ?? `The server answered with an error (HTTP ${res.status}).`;
+    throw Object.assign(new Error(message), { status: res.status });
+  }
   return json;
+}
+
+// ---------------------------------------------------------------------------
+// Notifications. A problem with one bidder's action (a rejected commit, say)
+// shows on that bidder's card; one that concerns the whole page (a failed
+// refresh) in a toast. Neither blocks the page the way alert() did.
+// ---------------------------------------------------------------------------
+
+const TOAST_SECONDS = 8;
+
+/**
+ * Show a toast. A toast with the same key replaces the previous one, so a
+ * problem that repeats shows once; a sticky one stays until dismissed, by
+ * the user or by dismissToast(key) once the problem is over.
+ */
+function showToast(message, { key = "", sticky = false } = {}) {
+  if (key) dismissToast(key);
+  const toast = el("div", "toast");
+  toast.dataset.key = key;
+  toast.setAttribute("role", "alert");  // announced by screen readers
+  const close = el("button", "toast-close", "✕");
+  close.type = "button";
+  close.setAttribute("aria-label", "Dismiss");
+  close.addEventListener("click", () => toast.remove());
+  toast.append(el("span", "toast-text", message), close);
+  document.getElementById("toasts").append(toast);
+  if (!sticky) setTimeout(() => toast.remove(), TOAST_SECONDS * 1000);
+}
+
+function dismissToast(key) {
+  for (const toast of [...document.getElementById("toasts").children]) {
+    if (toast.dataset.key === key) toast.remove();
+  }
+}
+
+/**
+ * Show what went wrong with a bidder's last action on their card ("" clears
+ * it). It stays until they try again or the auction moves to another phase.
+ */
+function showBidderError(bidderId, message) {
+  const view = bidderCards.get(bidderId);
+  if (!view) {
+    if (message) showToast(message);
+    return;
+  }
+  view.error.textContent = message;
+  view.error.hidden = !message;
+  view.errorPhase = localState.serverState?.state;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,12 +314,21 @@ function submitReveal(bidderId) {
 async function commitBid(bidderId) {
   const inputEl = document.getElementById(`bid-input-${bidderId}`);
   if (!inputEl) return;
-  const bid = parseInt(inputEl.value, 10);
+  showBidderError(bidderId, "");
 
-  if (isNaN(bid)) { alert("Please enter a valid bid amount."); return; }
+  // A commitment binds the bidder to exactly this number, so nothing is
+  // rounded or cut off: "12.5" is refused, not committed as 12.
+  const typed = inputEl.value.trim();
+  const bid = Number(typed);
   const { min_bid, max_bid } = localState.auction;
-  if (bid < min_bid || bid > max_bid) {
-    alert(`Bid must be between ${fmtBid(min_bid)} and ${fmtBid(max_bid)}.`);
+  let problem = "";
+  if (typed === "" || !Number.isSafeInteger(bid)) problem = "Enter a whole number of dollars.";
+  else if (bid < min_bid || bid > max_bid) {
+    problem = `Bids must be between ${fmtBid(min_bid)} and ${fmtBid(max_bid)}.`;
+  }
+  if (problem) {
+    showBidderError(bidderId, problem);
+    inputEl.focus();
     return;
   }
 
@@ -281,18 +349,23 @@ async function commitBid(bidderId) {
 
     await refreshState();
   } catch (err) {
-    alert(`Commit failed: ${err.message}`);
+    showBidderError(bidderId, `Commit failed: ${err.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "Commit"; }
   }
 }
+
+/** The explanation when this browser holds no opening for a bidder. */
+const NO_SECRET =
+  "This browser has no record of the bid: it was committed elsewhere, or the page was reloaded.";
 
 // ---------------------------------------------------------------------------
 // Phase 2 — ZK Prove
 // ---------------------------------------------------------------------------
 
 async function proveBid(bidderId) {
+  showBidderError(bidderId, "");
   const secret = localState.bidderSecrets[bidderId];
-  if (!secret) { alert("No local secret found. Did you commit first?"); return; }
+  if (!secret) { showBidderError(bidderId, NO_SECRET); return; }
 
   const btn = document.getElementById(`btn-prove-${bidderId}`);
   if (btn) { btn.disabled = true; btn.textContent = "Proving…"; }
@@ -308,7 +381,7 @@ async function proveBid(bidderId) {
 
     await refreshState();
   } catch (err) {
-    alert(`Prove failed: ${err.message}`);
+    showBidderError(bidderId, `Proof failed: ${err.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "ZK Prove"; }
   }
 }
@@ -318,8 +391,9 @@ async function proveBid(bidderId) {
 // ---------------------------------------------------------------------------
 
 async function revealBid(bidderId) {
+  showBidderError(bidderId, "");
   const secret = localState.bidderSecrets[bidderId];
-  if (!secret) { alert("No local secret found. Did you commit?"); return; }
+  if (!secret) { showBidderError(bidderId, NO_SECRET); return; }
 
   const btn = document.getElementById(`btn-reveal-${bidderId}`);
   if (btn) { btn.disabled = true; btn.textContent = "Revealing…"; }
@@ -340,7 +414,7 @@ async function revealBid(bidderId) {
       showWinnerModal(data.winner);
     }
   } catch (err) {
-    alert(`Reveal failed: ${err.message}`);
+    showBidderError(bidderId, `Reveal failed: ${err.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "Reveal"; }
   }
 }
@@ -349,14 +423,25 @@ async function revealBid(bidderId) {
 // Fetch and render server state
 // ---------------------------------------------------------------------------
 
+// After a failed refresh, the next try comes this much later.
+const REFRESH_RETRY_SECONDS = 10;
+
 async function refreshState() {
   try {
     const data = await apiFetch(auctionUrl());
     localState.serverState = data;
+    dismissToast("refresh");
     renderAll(data);
     scheduleDeadlineRefresh(data);
   } catch (err) {
-    console.error("refreshState error:", err);
+    if (err.status === 404) {
+      showToast("This auction no longer exists on the server.", { key: "refresh", sticky: true });
+      return;
+    }
+    // Keep trying: the page relies on refreshes to follow the deadlines.
+    showToast(`Could not refresh the auction: ${err.message} Retrying…`, { key: "refresh", sticky: true });
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshState, REFRESH_RETRY_SECONDS * 1000);
   }
 }
 
@@ -367,7 +452,8 @@ async function refreshState() {
 
 const PHASE_STEP = { open: "commit", committed: "prove", proved: "reveal" };
 
-let deadlineTimer = null;
+// The next scheduled refresh: at the current deadline, or a retry.
+let refreshTimer = null;
 
 /** The deadline (ISO 8601) of the phase in progress. */
 function currentDeadline(state) {
@@ -380,11 +466,11 @@ function currentDeadline(state) {
  * wrong clock on this computer does not matter.
  */
 function scheduleDeadlineRefresh(state) {
-  clearTimeout(deadlineTimer);
-  deadlineTimer = null;
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
   if (state.state === "finished") return;
   const delay = Date.parse(currentDeadline(state)) - Date.parse(state.server_time);
-  deadlineTimer = setTimeout(refreshState, Math.max(delay, 0) + 250);
+  refreshTimer = setTimeout(refreshState, Math.max(delay, 0) + 250);
 }
 
 function renderAll(state) {
@@ -449,6 +535,8 @@ function createBidderCard(bidderId) {
     status:       el("div", ""),
     winner:       el("div", "bidder-winner-badge", "🏆 Winner!"),
     actions:      el("div", "bidder-actions"),
+    error:        el("div", "bidder-error"),  // see showBidderError
+    errorPhase:   undefined,
     // The controls last as long as the card; only which ones show changes.
     bidForm:      el("div", "bidder-bid-input"),
     bidInput:     el("input", ""),
@@ -466,12 +554,16 @@ function createBidderCard(bidderId) {
   view.proveButton.addEventListener("click", () => proveBid(bidderId));
   view.revealButton.addEventListener("click", () => revealBid(bidderId));
   view.bidForm.append(view.bidInput, view.commitButton);
+  view.error.id = `bidder-error-${bidderId}`;
+  view.error.setAttribute("role", "alert");  // announced by screen readers
+  view.error.hidden = true;
+  view.bidInput.setAttribute("aria-describedby", view.error.id);
 
   const name = el("div", "bidder-card-name");
   name.append(el("div", "bidder-avatar", "👤"), view.name);
   const phases = el("div", "bidder-phases");
   phases.append(view.badges.commit, view.badges.prove, view.badges.reveal);
-  view.card.append(name, phases, view.hash, view.status, view.winner, view.actions);
+  view.card.append(name, phases, view.hash, view.status, view.winner, view.actions, view.error);
   return view;
 }
 
@@ -554,6 +646,8 @@ function updateBidderCard(view, b, state) {
 
   setChildren(view.actions, bidderActions(view, b, state));
   view.actions.hidden = view.actions.children.length === 0;
+  // An error from an earlier phase no longer applies.
+  if (!view.error.hidden && view.errorPhase !== state.state) showBidderError(b.bidder_id, "");
 }
 
 function renderBidderCards(state) {
@@ -739,10 +833,16 @@ async function resetAuction() {
   try {
     // As the organizer: the auction is deleted on the server too.
     await apiFetch(auctionUrl(), "DELETE", null, localState.auction.organizer_token);
-  } catch (_) { /* ignore */ }
+  } catch (err) {
+    // The page resets anyway. If the auction is already gone, so much the better.
+    if (err.status !== 404) {
+      showToast(`The auction could not be deleted on the server: ${err.message}`);
+    }
+  }
 
   // Clear client state
-  clearTimeout(deadlineTimer);
+  clearTimeout(refreshTimer);
+  dismissToast("refresh");
   localState.auction = null;
   localState.serverState = null;
   localState.joinTokens = {};
@@ -827,10 +927,13 @@ async function startDemo() {
     auctionData = await apiFetch("/api/auctions", "POST", request);
   } catch (err) {
     showSetupError(err.message);
+    return;
+  } finally {
+    // Usable again whether the demo started or not: they stayed disabled
+    // after a demo, so the setup form was dead after a reset.
     createBtn.disabled = false;
     demoBtn.disabled   = false;
     demoBtn.textContent = "▶ Watch Demo";
-    return;
   }
 
   rememberAuction(auctionData);
@@ -927,6 +1030,7 @@ async function startDemo() {
   } catch (err) {
     if (err.message !== "Demo stopped") {
       addPublicLogEntry("Demo error", { error: err.message });
+      showToast(`The demo stopped: ${err.message}`);
     }
   } finally {
     demo.running = false;

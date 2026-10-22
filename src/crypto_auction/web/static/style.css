@@ -634,6 +634,52 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 .progress-finish  .progress-bar-fill { background: var(--green); }
 
 /* =====================================================================
+   TOASTS AND INLINE ERRORS
+   ===================================================================== */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1100;  /* above the winner modal */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--red);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  animation: fadeInUp 0.25s ease;
+}
+
+.toast-text { flex: 1; }
+
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.toast-close:hover { color: var(--text-primary); }
+
+.bidder-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* =====================================================================
    WINNER MODAL
    ===================================================================== */
 #winner-overlay {

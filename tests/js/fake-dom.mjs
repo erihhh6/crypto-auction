@@ -54,6 +54,7 @@ export class FakeElement {
     this.hidden = false;
     this.title = "";
     this.listeners = {};
+    this.attributes = new Map();
     this.ownText = "";
     this.html = "";
     this.innerHTMLWrites = 0;
@@ -126,6 +127,13 @@ export class FakeElement {
       yield child;
       yield* child.descendants();
     }
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
   }
 
   addEventListener(type, listener) {
