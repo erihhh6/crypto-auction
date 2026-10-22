@@ -22,6 +22,7 @@ from crypto_auction.pedersen import decode_point, decode_scalar, verify
 from crypto_auction.range_proof import RangeProof, verify_range
 from crypto_auction.transcript import encode_parts
 from crypto_auction.web import create_app
+from tests.support import temporary_database
 
 NODE = shutil.which("node")
 CLI = Path(__file__).resolve().parent / "js" / "bidder_cli.mjs"
@@ -90,7 +91,7 @@ class TestBrowserInterop(unittest.TestCase):
         # Exactly what the page does: every commitment and proof is computed by
         # the browser module; the server only ever sees commitments and proofs
         # until the reveal.
-        client = create_app({"TESTING": True}).test_client()
+        client = create_app({"TESTING": True, "DATABASE": temporary_database(self)}).test_client()
         created = client.post(
             "/api/auctions",
             json={"item_name": "x", "min_bid": 100, "max_bid": 5000, "bidders": ["A", "B"]},

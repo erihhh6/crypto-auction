@@ -1,5 +1,8 @@
 """Shared helpers for the test suite."""
 
+import os
+import tempfile
+
 import pytest
 
 
@@ -13,6 +16,18 @@ def known_bug(reason, *, raises=AssertionError):
     remove this marker.
     """
     return pytest.mark.xfail(reason=reason, raises=raises, strict=True)
+
+
+def temporary_database(test):
+    """
+    A path for a new SQLite database file, deleted when `test` ends.
+
+    Deleting fails on Windows while a connection is still open, so this also
+    checks that every operation closes its connection.
+    """
+    directory = tempfile.TemporaryDirectory()
+    test.addCleanup(directory.cleanup)
+    return os.path.join(directory.name, "auctions.sqlite3")
 
 
 class FakeClock:

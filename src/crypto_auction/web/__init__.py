@@ -1,5 +1,6 @@
 """Flask web app for the auction: the page plus the /api blueprint."""
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -15,14 +16,19 @@ def create_app(
     """
     Build the web app (also found by `flask --app crypto_auction.web run`).
 
-    Each app gets its own AuctionService, so separate apps (one per test, for
-    instance) never share auction state: there is no module-level auction.
-    Pass `service` to supply it, e.g. one whose clock a test controls.
+    The auctions are stored in the SQLite file named by the DATABASE setting:
+    from `config`, else from the CRYPTO_AUCTION_DATABASE environment variable,
+    else auctions.sqlite3 in the app's instance folder. Pass `service` to
+    supply the AuctionService instead, e.g. one whose clock a test controls.
     """
     app = Flask(__name__)
+    app.config.from_prefixed_env("CRYPTO_AUCTION")
     if config is not None:
         app.config.update(config)
-    app.extensions[api.SERVICE_KEY] = service if service is not None else AuctionService()
+    if service is None:
+        database = app.config.get("DATABASE") or os.path.join(app.instance_path, "auctions.sqlite3")
+        service = AuctionService(database)
+    app.extensions[api.SERVICE_KEY] = service
     api.register_error_handlers(app)
     app.register_blueprint(api.bp)
     app.add_url_rule("/", "index", _index)

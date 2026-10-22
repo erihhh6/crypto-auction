@@ -1,7 +1,9 @@
 """Tests for the REST API (crypto_auction.web), exercised through Flask's test client."""
 
+import os
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest import mock
 
 from crypto_auction.auction import Auction, bid_proof_context
@@ -17,8 +19,13 @@ from crypto_auction.pedersen import (
 from crypto_auction.range_proof import prove_range
 from crypto_auction.service import AuctionService
 from crypto_auction.web import create_app
-from crypto_auction.web.api import MAX_NAME_LENGTH, MAX_PHASE_SECONDS, MIN_PHASE_SECONDS
-from tests.support import FakeClock
+from crypto_auction.web.api import (
+    MAX_NAME_LENGTH,
+    MAX_PHASE_SECONDS,
+    MIN_PHASE_SECONDS,
+    SERVICE_KEY,
+)
+from tests.support import FakeClock, temporary_database
 
 # bidder_0..2 are Alice, Bob and Carol in the default auction; Bob bids highest.
 BIDS = {"bidder_0": 1200, "bidder_1": 1800, "bidder_2": 1500}
@@ -40,9 +47,10 @@ class ApiTestCase(unittest.TestCase):
 
     def setUp(self):
         self.clock = FakeClock()
+        self.database = temporary_database(self)
+        service = AuctionService(self.database, clock=self.clock)
         # TESTING lets unhandled exceptions propagate instead of becoming 500s.
-        app = create_app({"TESTING": True}, service=AuctionService(clock=self.clock))
-        self.client = app.test_client()
+        self.client = create_app({"TESTING": True}, service=service).test_client()
 
     def url(self, suffix=""):
         """The URL of the auction created last, or of one of its actions."""
@@ -253,14 +261,18 @@ class TestSeveralAuctions(ApiTestCase):
         resp = self.client.delete(self.url(), headers=bearer(first_organizer))
         self.assert_error(resp, 401)
 
-    def test_the_number_of_auctions_is_capped(self):
-        service = AuctionService(clock=self.clock, max_auctions=2)
+    def test_the_number_of_running_auctions_is_capped(self):
+        service = AuctionService(self.database, clock=self.clock, max_auctions=2)
         self.client = create_app({"TESTING": True}, service=service).test_client()
         self.assert_created(self.create())
-        self.assert_created(self.create())
+        self.assert_created(self.create(reveal_seconds=60))
         self.assert_error(self.create(), 503)
         # Deleting one makes room again.
         self.assert_ok(self.client.delete(self.url(), headers=bearer(self.organizer_token)))
+        self.assert_created(self.create(reveal_seconds=60))
+        self.assert_error(self.create(), 503)
+        # So does an auction ending: this one's reveal deadline passes.
+        self.clock.advance(1200 + 60)
         self.assert_created(self.create())
 
 
@@ -673,7 +685,7 @@ class TestRequestFormat(ApiTestCase):
 
     def test_unexpected_error_gets_a_json_500_without_internals(self):
         # Outside TESTING mode Flask turns an unhandled exception into a 500.
-        self.client = create_app().test_client()
+        self.client = create_app({"DATABASE": self.database}).test_client()
         self.create()
         with mock.patch.object(Auction, "get_public_state", side_effect=RuntimeError("secret")):
             resp = self.client.get(self.url())
@@ -681,11 +693,30 @@ class TestRequestFormat(ApiTestCase):
 
 
 class TestAppFactory(ApiTestCase):
-    def test_each_app_has_its_own_auctions(self):
+    def test_apps_on_different_databases_have_different_auctions(self):
         self.assert_created(self.create())
-        other = create_app({"TESTING": True}).test_client()
-        self.assert_error(other.get(self.url()), 404)
+        other = create_app({"TESTING": True, "DATABASE": temporary_database(self)})
+        self.assert_error(other.test_client().get(self.url()), 404)
         self.assert_ok(self.client.get(self.url()))
+
+    def test_apps_on_one_database_share_its_auctions(self):
+        # As after a restart, or with several server processes.
+        self.assert_created(self.create())
+        other = create_app({"TESTING": True, "DATABASE": self.database}).test_client()
+        self.assertEqual(other.get(self.url()).get_json()["item_name"], "Rare NFT #42")
+
+    def test_the_database_can_be_set_by_environment_variable(self):
+        with mock.patch.dict(os.environ, {"CRYPTO_AUCTION_DATABASE": self.database}):
+            app = create_app({"TESTING": True})
+        self.assert_created(self.create())
+        self.assert_ok(app.test_client().get(self.url()))
+
+    def test_by_default_the_database_is_in_the_instance_folder(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("CRYPTO_AUCTION_DATABASE", None)
+            app = create_app()
+        expected = Path(app.instance_path) / "auctions.sqlite3"
+        self.assertEqual(app.extensions[SERVICE_KEY].database, expected)
 
 
 if __name__ == "__main__":

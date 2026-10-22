@@ -6,13 +6,20 @@ so the service only records and verifies what they send; it never sees a bid
 before the reveal. A bidder is identified by the join token they present,
 never by an id they name; the organizer, by the organizer token.
 
+Auctions live in an SQLite database (store.py). Each operation loads the
+auction, acts on it and stores it again, all in one transaction, so concurrent
+requests (threads, or processes sharing the database) never interleave.
+
 The service knows nothing about HTTP: the web layer maps NoAuctionError to 404,
 AuthenticationError to 401, AuctionRuleError to 400 and CapacityError to 503.
 """
 
-import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from os import PathLike
+from pathlib import Path
 from typing import Any
 
 from crypto_auction.auction import (
@@ -23,9 +30,9 @@ from crypto_auction.auction import (
     ProofResult,
     RevealResult,
 )
+from crypto_auction.store import AuctionStore
 
-# Anyone may create an auction, so the number held at once is capped: memory
-# stays bounded however many are created.
+# Anyone may create an auction, so the number running at once is capped.
 DEFAULT_MAX_AUCTIONS = 1000
 
 
@@ -42,7 +49,7 @@ class AuctionRuleError(Exception):
 
 
 class CapacityError(Exception):
-    """The server holds as many auctions as it may; none can be created now."""
+    """As many auctions are running as may; none can be created now."""
 
 
 @dataclass(frozen=True)
@@ -55,69 +62,88 @@ class NewAuction:
 
 
 class AuctionService:
-    def __init__(self, clock: Clock = time.time, max_auctions: int = DEFAULT_MAX_AUCTIONS) -> None:
+    def __init__(
+        self,
+        database: str | PathLike[str],
+        clock: Clock = time.time,
+        max_auctions: int = DEFAULT_MAX_AUCTIONS,
+    ) -> None:
         """
+        database: the SQLite file holding the auctions (created on first use).
         clock: what the auctions' deadlines are measured against (tests pass a fake).
-        max_auctions: how many auctions may exist at once.
+        max_auctions: how many auctions may be running at once; finished ones,
+            and ones past their reveal deadline, do not count.
         """
+        self._store = AuctionStore(database)
         self._clock = clock
         self._max_auctions = max_auctions
-        self._auctions: dict[str, Auction] = {}
-        # Flask serves requests on several threads, and operations read and
-        # update auctions (phase changes, commit order), so they run one at a
-        # time, each holding the lock until it is done. One lock for all
-        # auctions keeps that simple; the slowest operation, verifying a range
-        # proof, takes about 0.1 s.
-        self._lock = threading.Lock()
 
-    def _get(self, auction_id: str) -> Auction:
-        try:
-            return self._auctions[auction_id]
-        except KeyError:
-            raise NoAuctionError(f"No auction with id '{auction_id}'.") from None
+    @property
+    def database(self) -> Path:
+        """The SQLite file the auctions are stored in."""
+        return self._store.database
 
-    def _authenticate(self, auction_id: str, token: str) -> tuple[Auction, str]:
-        """The auction and the bidder_id that token belongs to in it."""
-        auction = self._get(auction_id)
+    @contextmanager
+    def _auction(self, auction_id: str) -> Iterator[Auction]:
+        """
+        The auction, loaded for one operation and stored again afterwards if
+        the operation changed it; nothing is stored if the operation raises.
+        """
+        with self._store.transaction() as tx:
+            record = tx.load(auction_id)
+            if record is None:
+                raise NoAuctionError(f"No auction with id '{auction_id}'.")
+            auction = Auction.from_record(record, clock=self._clock)
+            yield auction
+            # Queries change an auction too when they pass a deadline, which
+            # moves it on to the next phase.
+            changed = auction.to_record()
+            if changed != record:
+                tx.save(changed)
+
+    @staticmethod
+    def _bidder(auction: Auction, token: str) -> str:
+        """The bidder_id that token belongs to in this auction."""
         bidder_id = auction.authenticate(token)
         if bidder_id is None:
             raise AuthenticationError("Missing or invalid join token for this auction.")
-        return auction, bidder_id
+        return bidder_id
 
     def require_bidder(self, auction_id: str, token: str) -> None:
         """Raise NoAuctionError or AuthenticationError unless token is a bidder's."""
-        with self._lock:
-            self._authenticate(auction_id, token)
+        with self._auction(auction_id) as auction:
+            self._bidder(auction, token)
 
     def create(self, config: AuctionConfig) -> NewAuction:
         """
         Start a new auction alongside the others.
 
         Returns it with the organizer token and every bidder's join token. The
-        tokens cannot be retrieved later: the auction keeps only digests.
+        tokens cannot be retrieved later: only their digests are stored.
 
         Raises:
-            CapacityError: if max_auctions already exist.
+            CapacityError: if max_auctions are already running.
         """
-        with self._lock:
-            if len(self._auctions) >= self._max_auctions:
+        with self._store.transaction() as tx:
+            if tx.count_running(self._clock()) >= self._max_auctions:
                 raise CapacityError("Too many auctions at once; try again later.")
             auction = Auction(config, clock=self._clock)
-            self._auctions[auction.auction_id] = auction
-            return NewAuction(
+            created = NewAuction(
                 auction=auction,
                 organizer_token=auction.issue_organizer_token(),
                 join_tokens=auction.issue_join_tokens(),
             )
+            tx.save(auction.to_record())
+            return created
 
     def public_state(self, auction_id: str) -> dict[str, Any]:
-        with self._lock:
-            return self._get(auction_id).get_public_state()
+        with self._auction(auction_id) as auction:
+            return auction.get_public_state()
 
     def commit(self, auction_id: str, token: str, commitment_hex: str) -> CommitResult:
         """Record the token holder's Pedersen commitment (a compressed point)."""
-        with self._lock:
-            auction, bidder_id = self._authenticate(auction_id, token)
+        with self._auction(auction_id) as auction:
+            bidder_id = self._bidder(auction, token)
             try:
                 return auction.submit_commitment(bidder_id, commitment_hex)
             except ValueError as exc:
@@ -125,8 +151,8 @@ class AuctionService:
 
     def prove(self, auction_id: str, token: str, proof_data: dict[str, Any]) -> ProofResult:
         """Verify and record the token holder's range proof (RangeProof.to_dict() format)."""
-        with self._lock:
-            auction, bidder_id = self._authenticate(auction_id, token)
+        with self._auction(auction_id) as auction:
+            bidder_id = self._bidder(auction, token)
             try:
                 return auction.submit_proof(bidder_id, proof_data)
             except ValueError as exc:
@@ -134,8 +160,8 @@ class AuctionService:
 
     def reveal(self, auction_id: str, token: str, bid: int, blinding: int) -> RevealResult:
         """Open the token holder's commitment; the last reveal determines the winner."""
-        with self._lock:
-            auction, bidder_id = self._authenticate(auction_id, token)
+        with self._auction(auction_id) as auction:
+            bidder_id = self._bidder(auction, token)
             try:
                 return auction.submit_reveal(bidder_id, bid, blinding)
             except ValueError as exc:
@@ -143,7 +169,10 @@ class AuctionService:
 
     def delete(self, auction_id: str, organizer_token: str) -> None:
         """Discard an auction; only its organizer may."""
-        with self._lock:
-            if not self._get(auction_id).is_organizer(organizer_token):
+        with self._store.transaction() as tx:
+            record = tx.load(auction_id)
+            if record is None:
+                raise NoAuctionError(f"No auction with id '{auction_id}'.")
+            if not Auction.from_record(record, clock=self._clock).is_organizer(organizer_token):
                 raise AuthenticationError("Missing or invalid organizer token for this auction.")
-            del self._auctions[auction_id]
+            tx.delete(auction_id)

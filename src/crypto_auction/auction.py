@@ -33,10 +33,10 @@ import hmac
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, Self, TypeAlias
 
 from crypto_auction.pedersen import N, decode_point, encode_scalar
 from crypto_auction.pedersen import verify as verify_opening
@@ -150,6 +150,18 @@ class Winner:
 
 
 @dataclass(frozen=True)
+class AuctionRecord:
+    """Everything an auction consists of, to store it and load it back (Auction.to_record)."""
+
+    auction_id: str
+    config: AuctionConfig
+    state: AuctionState
+    deadlines: dict[str, float]
+    organizer_digest: bytes | None
+    bidders: list[BidderState]
+
+
+@dataclass(frozen=True)
 class CommitResult:
     phase: AuctionState
     message: str
@@ -194,9 +206,6 @@ class Auction:
         for idx, name in enumerate(config.bidder_names):
             bidder_id = f"bidder_{idx}"
             self.bidders[bidder_id] = BidderState(bidder_id=bidder_id, name=name)
-        # Ties go to the earliest commitment. A counter orders commitments
-        # deterministically, where timestamps could collide or be skewed.
-        self._commits_received = 0
         # Bound into every range proof's context, so a proof made for one
         # auction cannot be replayed in another.
         self.auction_id = secrets.token_hex(16)
@@ -214,6 +223,32 @@ class Auction:
     def proof_context(self, bidder_id: str) -> bytes:
         """What a bidder's range proof is bound to: this auction and this bidder."""
         return bid_proof_context(self.auction_id, bidder_id)
+
+    # ------------------------------------------------------------------
+    # Storage
+    # ------------------------------------------------------------------
+
+    def to_record(self) -> AuctionRecord:
+        """A snapshot of the auction, independent of later changes to it."""
+        return AuctionRecord(
+            auction_id=self.auction_id,
+            config=self.config,
+            state=self.state,
+            deadlines=dict(self.deadlines),
+            organizer_digest=self._organizer_digest,
+            bidders=[replace(b) for b in self.bidders.values()],
+        )
+
+    @classmethod
+    def from_record(cls, record: AuctionRecord, clock: Clock = time.time) -> Self:
+        """The auction a record was taken from, as it was then."""
+        auction = cls(record.config, clock)
+        auction.auction_id = record.auction_id
+        auction.state = record.state
+        auction.deadlines = dict(record.deadlines)
+        auction._organizer_digest = record.organizer_digest
+        auction.bidders = {b.bidder_id: replace(b) for b in record.bidders}
+        return auction
 
     # ------------------------------------------------------------------
     # Bidder identity
@@ -340,9 +375,11 @@ class Auction:
         if any(b.commitment_hex == commitment_hex for b in self.bidders.values()):
             raise ValueError("This commitment was already submitted by another bidder.")
 
+        # Ties go to the earliest commitment. Numbering commitments as they
+        # arrive orders them deterministically, where timestamps could collide
+        # or be skewed.
+        bidder.commit_order = sum(b.commitment_hex is not None for b in self.bidders.values())
         bidder.commitment_hex = commitment_hex
-        bidder.commit_order = self._commits_received
-        self._commits_received += 1
         self._advance()
 
         return CommitResult(phase=self.state, message=f"{bidder.name} committed successfully.")

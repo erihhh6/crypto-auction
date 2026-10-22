@@ -17,8 +17,8 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > **Work in progress.** This started as a prototype and is being hardened step
 > by step. The cryptographic guarantees below now hold under the
 > honest-but-curious model, but the application around them is not
-> production-ready yet: nothing is stored on disk, and there are no accounts
-> or rate limits, among others. See [Limitations](#limitations).
+> production-ready yet: there are no accounts or rate limits, and one page
+> plays every bidder, among others. See [Limitations](#limitations).
 
 ---
 
@@ -125,6 +125,11 @@ python -m crypto_auction.web
 The page proves bids with the browser's Web Crypto API, which is only
 available in a secure context: open it on `localhost`, or serve it over HTTPS.
 
+Auctions are stored in an SQLite database, so a restart loses nothing. By
+default it is `auctions.sqlite3` in Flask's instance folder (`src/instance/`
+for this checkout); set `CRYPTO_AUCTION_DATABASE` to use another file. Several
+server processes can share one file: each request runs in its own transaction.
+
 For local development with auto-reload and the interactive debugger
 (never enable this on a reachable host):
 
@@ -181,6 +186,7 @@ crypto-auction/
 │       ├── transcript.py     # Unambiguous encoding for Fiat-Shamir transcripts
 │       ├── auction.py        # State machine + auction logic
 │       ├── service.py        # Runs the auctions: authenticates callers, verifies what they send
+│       ├── store.py          # SQLite storage, one transaction per operation
 │       └── web/              # Flask app: create_app(), python -m crypto_auction.web
 │           ├── api.py        # /api blueprint: routes and request validation
 │           ├── templates/
@@ -196,11 +202,12 @@ crypto-auction/
 │   │   ├── app-flow.test.mjs # What each request sends, and as whom: no bid before the reveal
 │   │   ├── crypto.test.mjs   # Browser crypto: generator, encodings, refusals
 │   │   └── bidder_cli.mjs    # Runs the browser crypto for the Python interop tests
-│   ├── support.py            # Shared helpers (known_bug marker)
+│   ├── support.py            # Shared helpers (known_bug marker, fake clock, temporary database)
 │   ├── test_pedersen.py      # Pedersen commitments, generators, encoding
 │   ├── test_bit_proof.py     # Bit proof: completeness, soundness, binding
 │   ├── test_range_proof.py   # Range proof, incl. wrap-around and non-bit attacks
 │   ├── test_auction.py       # State machine, proof binding and winner selection
+│   ├── test_store.py         # SQLite storage: round trips, restarts, concurrent requests
 │   ├── test_api.py           # REST API via Flask's test client
 │   ├── test_browser_interop.py  # Server accepts what the browser produces (needs Node)
 │   └── test_app.py           # Server entry point (debug mode)
@@ -272,15 +279,19 @@ trades size for simplicity.
   server only verifies public data.
 - **Secrets live in page memory**: reloading the page loses a bidder's blinding
   factor, and with it the ability to reveal.
-- **Anyone can create auctions**: there are no accounts or rate limits. The
-  server holds at most 1000 auctions at once and refuses more (503).
+- **Anyone can create auctions**: there are no accounts or rate limits. At
+  most 1000 auctions run at once; more are refused (503).
+- **Finished auctions are kept indefinitely**: there is no retention policy
+  yet, so the database only grows.
+- **One request at a time per database**: each holds SQLite's write lock for
+  its whole transaction, including verifying a range proof (under 0.1 s).
+  Fine for a demo, but it caps throughput under load.
 - **One page plays every bidder**: the page that creates the auction receives
   every join token; there is no per-bidder view yet.
 - **No deposits**: a bidder who misses a deadline only loses the chance to
   win. A real deployment would take a deposit that is forfeited along with
   it, so that dropping out has a cost.
 - **Single-server model**: Production would use MPC for the auctioneer role.
-- **In-memory state**: No database; a server restart loses every auction.
 
 Known bugs are tracked as `known_bug` tests (see the development setup above);
 `pytest -rx` lists them with their reasons.

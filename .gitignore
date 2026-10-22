@@ -44,6 +44,10 @@ desktop.ini
 *.log
 flask_session/
 
+# App data: Flask's instance folder holds the auction database
+instance/
+*.sqlite3
+
 # Distribution
 *.whl
 *.tar.gz

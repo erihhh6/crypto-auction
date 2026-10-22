@@ -18,7 +18,7 @@ Tokens:
   bidder, each sent as "Authorization: Bearer <token>". Commit, prove and
   reveal act for the bidder whose join token it is; only the organizer token
   deletes. A missing or wrong token gets a 401. An unknown auction id is a 404,
-  and creation is refused with a 503 while the server holds its maximum.
+  and creation is refused with a 503 while the maximum number of auctions run.
 
 Deadlines:
   Each step (commit, prove, reveal) has a window; they follow one another from
