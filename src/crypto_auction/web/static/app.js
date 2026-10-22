@@ -110,11 +110,12 @@ const TOAST_SECONDS = 8;
  * problem that repeats shows once; a sticky one stays until dismissed, by
  * the user or by dismissToast(key) once the problem is over.
  */
-function showToast(message, { key = "", sticky = false } = {}) {
+function showToast(message, { key = "", sticky = false, kind = "error" } = {}) {
   if (key) dismissToast(key);
-  const toast = el("div", "toast");
+  const toast = el("div", `toast ${kind}`);
   toast.dataset.key = key;
-  toast.setAttribute("role", "alert");  // announced by screen readers
+  // Announced by screen readers: an error at once, other news politely.
+  toast.setAttribute("role", kind === "error" ? "alert" : "status");
   const close = el("button", "toast-close", "✕");
   close.type = "button";
   close.setAttribute("aria-label", "Dismiss");
@@ -251,6 +252,9 @@ function rememberAuction(data) {
   // auction's (with whatever was typed into them).
   bidderCards.clear();
   document.getElementById("bidder-cards").replaceChildren();
+  renderJoinLinks(data);
+  // A page for one bidder (from a join link or a receipt) can only leave.
+  document.getElementById("btn-reset").textContent = data.organizer_token ? "Reset" : "Leave";
 }
 
 /** Leave the setup panel for the auction view. */
@@ -259,6 +263,98 @@ function showAuctionView(itemName) {
   document.getElementById("auction-view").style.display = "grid";
   document.getElementById("phase-indicator").style.display = "flex";
   document.getElementById("auction-item-label").textContent = itemName;
+}
+
+/**
+ * Enter an auction as one of its bidders, from a join link or a receipt:
+ * the page then acts for that bidder only, and is not the organizer.
+ */
+function enterAsBidder(state, bidderId, name, joinToken) {
+  rememberAuction({
+    auction_id: state.auction_id,
+    item_name:  state.item_name,
+    min_bid:    state.min_bid,
+    max_bid:    state.max_bid,
+    bidders:    [{ bidder_id: bidderId, name, join_token: joinToken }],
+  });
+  showAuctionView(`${state.item_name} — bidding as ${name}`);
+}
+
+// ---------------------------------------------------------------------------
+// Join links. The organizer sends each bidder a link that opens this page as
+// them, so that everyone bids from their own device. The join token travels
+// in the URL's fragment, which browsers never send to the server: it stays
+// out of server logs and Referer headers.
+// ---------------------------------------------------------------------------
+
+/** The link that opens an auction as the bidder whose join token it carries. */
+function joinLink(auctionId, joinToken) {
+  const fragment = new URLSearchParams({ auction: auctionId, token: joinToken });
+  return `${location.origin}${location.pathname}#${fragment}`;
+}
+
+/** The auction id and join token in this page's URL, if it was opened from a join link. */
+function joinLinkParams() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const auctionId = params.get("auction");
+  const token = params.get("token");
+  return auctionId && token ? { auctionId, token } : null;
+}
+
+/** On the organizer's page: every bidder's join link, to copy and send. */
+function renderJoinLinks(data) {
+  const box = document.getElementById("join-links");
+  box.replaceChildren();
+  box.hidden = !data.organizer_token;
+  if (box.hidden) return;
+  box.append(
+    el("div", "action-section-title", "Join links"),
+    el("div", "action-info",
+       "Send each bidder their own link to bid from their own device. Keep the links " +
+       "private: whoever has one can act as that bidder."),
+  );
+  for (const b of data.bidders) {
+    const field = el("input", "join-link-field");
+    field.type = "text";
+    field.id = `join-link-${b.bidder_id}`;
+    field.readOnly = true;
+    field.value = joinLink(data.auction_id, b.join_token);
+    field.setAttribute("aria-label", `Join link for ${b.name}`);
+    const copy = el("button", "btn btn-copy", "Copy");
+    copy.id = `btn-copy-link-${b.bidder_id}`;
+    copy.addEventListener("click", () => copyJoinLink(b.name, field));
+    const row = el("div", "join-link");
+    row.append(el("span", "join-link-name", b.name), field, copy);
+    box.append(row);
+  }
+}
+
+async function copyJoinLink(name, field) {
+  try {
+    await navigator.clipboard.writeText(field.value);
+    showToast(`${name}'s join link is copied.`, { kind: "info" });
+  } catch {
+    // No clipboard access (an older browser, or a page not served securely):
+    // select the link, to be copied by hand.
+    field.focus();
+    field.select();
+    showToast("Could not copy the link; it is selected, so copy it with Ctrl+C (⌘C on a Mac).");
+  }
+}
+
+/** Open the auction as the bidder of the join link this page was opened from. */
+async function joinFromLink({ auctionId, token }) {
+  try {
+    const url = `/api/auctions/${encodeURIComponent(auctionId)}`;
+    const me = await apiFetch(`${url}/me`, "GET", null, token); // checks the link first
+    const state = await apiFetch(url);
+    enterAsBidder(state, me.bidder_id, me.name, token);
+    await refreshState();
+    addPublicLogEntry(`Joined as ${me.name}`, { from: "join link" });
+  } catch (err) {
+    const reason = err.status === 401 ? "it is not valid for this auction." : err.message;
+    showSetupError(`Could not open this join link: ${reason}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -353,20 +449,12 @@ async function resumeFromReceipt(file) {
       throw new Error(`The auction recorded a different commitment for ${bidder.name}.`);
     }
 
-    // This page now acts for that one bidder only, and is not the organizer.
-    rememberAuction({
-      auction_id: state.auction_id,
-      item_name:  state.item_name,
-      min_bid:    state.min_bid,
-      max_bid:    state.max_bid,
-      bidders:    [{ bidder_id: bidder.bidder_id, join_token: receipt.join_token }],
-    });
+    enterAsBidder(state, bidder.bidder_id, bidder.name, receipt.join_token);
     localState.bidderSecrets[bidder.bidder_id] = {
       bid:            receipt.bid,
       randomness_hex: receipt.randomness_hex,
       commitment_hex: receipt.commitment_hex,
     };
-    showAuctionView(state.item_name);
     await refreshState();
     addPublicLogEntry(`Resumed as ${bidder.name}`, { from: "opening receipt" });
   } catch (err) {
@@ -388,6 +476,10 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = true; // what older browsers look for instead
   }
 });
+
+// Opened from a join link: go straight into the auction as that bidder.
+const openedWith = joinLinkParams();
+if (openedWith) joinFromLink(openedWith);
 
 // ---------------------------------------------------------------------------
 // Bidder-side protocol steps. The bid and its blinding factor stay in this
@@ -541,11 +633,7 @@ async function revealBid(bidderId) {
       addPublicLogEntry(`${bidderName} reveal FAILED — cheater detected`, { bid: fmtBid(secret.bid) });
     }
 
-    await refreshState();
-
-    if (data.winner) {
-      showWinnerModal(data.winner);
-    }
+    await refreshState(); // shows the winner if this reveal was the last
   } catch (err) {
     showBidderError(bidderId, `Reveal failed: ${err.message}`);
     if (btn) { btn.disabled = false; btn.textContent = "Reveal"; }
@@ -559,14 +647,24 @@ async function revealBid(bidderId) {
 // After a failed refresh, the next try comes this much later.
 const REFRESH_RETRY_SECONDS = 10;
 
+// Numbers the refreshes, so that a slow answer cannot overwrite a newer one.
+let refreshCount = 0;
+
 async function refreshState() {
+  const count = ++refreshCount;
   try {
     const data = await apiFetch(auctionUrl());
+    if (count !== refreshCount) return; // a later refresh has started since
+    const finishedNow = data.state === "finished" && localState.serverState?.state !== "finished";
     localState.serverState = data;
     dismissToast("refresh");
     renderAll(data);
-    scheduleDeadlineRefresh(data);
+    scheduleNextRefresh(data);
+    // However the auction ended: by this page's reveal, another bidder's on
+    // their own device, or a deadline.
+    if (finishedNow && data.winner) showWinnerModal(data.winner);
   } catch (err) {
+    if (count !== refreshCount) return;
     if (err.status === 404) {
       showToast("This auction no longer exists on the server.", { key: "refresh", sticky: true });
       return;
@@ -585,7 +683,11 @@ async function refreshState() {
 
 const PHASE_STEP = { open: "commit", committed: "prove", proved: "reveal" };
 
-// The next scheduled refresh: at the current deadline, or a retry.
+// While an auction runs, the page asks for its state this often, so that what
+// other bidders do on their own devices shows up here.
+const POLL_SECONDS = 5;
+
+// The next scheduled refresh: the next poll, the current deadline, or a retry.
 let refreshTimer = null;
 
 /** The deadline (ISO 8601) of the phase in progress. */
@@ -594,17 +696,25 @@ function currentDeadline(state) {
 }
 
 /**
- * Refresh once the current phase's deadline has passed, so the page shows who
- * missed it. The delay is measured on the server's clock, which decides, so a
- * wrong clock on this computer does not matter.
+ * Plan the next refresh: in POLL_SECONDS, or just after the current phase's
+ * deadline if that comes first, so the page shows who missed it at once. The
+ * deadline is measured on the server's clock, which decides, so a wrong clock
+ * on this computer does not matter. Nothing is planned once the auction is
+ * finished, nor while the page is hidden.
  */
-function scheduleDeadlineRefresh(state) {
+function scheduleNextRefresh(state) {
   clearTimeout(refreshTimer);
   refreshTimer = null;
-  if (state.state === "finished") return;
-  const delay = Date.parse(currentDeadline(state)) - Date.parse(state.server_time);
-  refreshTimer = setTimeout(refreshState, Math.max(delay, 0) + 250);
+  if (state.state === "finished" || document.hidden) return;
+  const untilDeadline = Date.parse(currentDeadline(state)) - Date.parse(state.server_time);
+  const delay = Math.min(POLL_SECONDS * 1000, Math.max(untilDeadline, 0) + 250);
+  refreshTimer = setTimeout(refreshState, delay);
 }
+
+// A hidden page stops asking (see above); shown again, it catches up at once.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && localState.auction) refreshState();
+});
 
 function renderAll(state) {
   renderPhaseIndicator(state);
@@ -979,11 +1089,14 @@ function closeWinnerModal() {
 // ---------------------------------------------------------------------------
 
 async function resetAuction() {
-  if (!confirm("Reset the auction? All state will be lost.")) return;
+  const organizerToken = localState.auction.organizer_token;
+  const question = organizerToken
+    ? "Reset the auction? It is deleted, for every bidder."
+    : "Leave the auction? Unless you saved your receipt, this page forgets your bid.";
+  if (!confirm(question)) return;
   try {
-    // As the organizer, the auction is deleted on the server too. A page
-    // resumed from a bidder's receipt is no organizer: it just leaves.
-    const organizerToken = localState.auction.organizer_token;
+    // As the organizer, the auction is deleted on the server too. A page for
+    // one bidder (join link, receipt) is no organizer: it just leaves.
     if (organizerToken) await apiFetch(auctionUrl(), "DELETE", null, organizerToken);
   } catch (err) {
     // The page resets anyway. If the auction is already gone, so much the better.
@@ -994,7 +1107,10 @@ async function resetAuction() {
 
   // Clear client state
   clearTimeout(refreshTimer);
+  refreshCount++; // an answer still on its way is for the auction just left
   dismissToast("refresh");
+  // A join link in the address bar would open the auction again on reload.
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   localState.auction = null;
   localState.serverState = null;
   localState.joinTokens = {};

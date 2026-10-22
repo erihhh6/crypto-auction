@@ -114,6 +114,12 @@ class AuctionService:
         with self._auction(auction_id) as auction:
             self._bidder(auction, token)
 
+    def identify(self, auction_id: str, token: str) -> tuple[str, str]:
+        """The bidder_id and name of the bidder whose join token this is."""
+        with self._auction(auction_id) as auction:
+            bidder_id = self._bidder(auction, token)
+            return bidder_id, auction.bidders[bidder_id].name
+
     def create(self, config: AuctionConfig) -> NewAuction:
         """
         Start a new auction alongside the others.

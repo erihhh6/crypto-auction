@@ -147,11 +147,18 @@ export class FakeElement {
   focus() {
     this.ownerDocument.activeElement = this;
   }
+  select() {
+    this.selected = true;
+  }
 }
 
-/** A document with the page's elements; `overrides` replace its methods. */
+/**
+ * A document with the page's elements; `overrides` replace its methods.
+ * `hidden` and `listeners` (by event type) stand for the page's visibility.
+ */
 export function fakeDocument(overrides = {}) {
-  const document = { querySelectorAll: () => [] };
+  const document = { querySelectorAll: () => [], hidden: false, listeners: {} };
+  document.addEventListener = (type, listener) => (document.listeners[type] ??= []).push(listener);
   document.createElement = (tag) => new FakeElement(document, tag);
   document.body = document.createElement("body");
   document.activeElement = document.body;

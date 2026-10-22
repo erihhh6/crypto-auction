@@ -139,9 +139,11 @@
     <section id="actions-panel">
       <div class="panel-header">
         <h2>Actions</h2>
-        <button class="btn-reset" onclick="resetAuction()">Reset</button>
+        <button id="btn-reset" class="btn-reset" onclick="resetAuction()">Reset</button>
       </div>
       <div id="actions-content"></div>
+      <!-- On the organizer's page: each bidder's join link (app.js renderJoinLinks) -->
+      <div id="join-links" class="action-section join-links" hidden></div>
     </section>
 
   </main>

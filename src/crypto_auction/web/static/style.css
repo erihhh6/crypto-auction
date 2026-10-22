@@ -626,6 +626,17 @@ input[type="number"]:focus { border-color: var(--color-commit); }
 
 .action-info strong { color: var(--text-primary); }
 
+.join-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.join-link-name { flex: 0 0 72px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.join-link-field { flex: 1; min-width: 0; font-family: monospace; font-size: 11px; }
+.btn-copy { background: var(--bg-raised); color: var(--text-muted); border: 1px solid var(--border); padding: 5px 10px; }
+.btn-copy:hover { color: var(--text-primary); }
+
 .progress-bar {
   height: 4px;
   background: var(--bg-raised);
@@ -673,6 +684,8 @@ input[type="number"]:focus { border-color: var(--color-commit); }
   box-shadow: 0 6px 24px rgba(0,0,0,.35);
   animation: fadeInUp 0.25s ease;
 }
+
+.toast.info { border-color: var(--green); }
 
 .toast-text { flex: 1; }
 

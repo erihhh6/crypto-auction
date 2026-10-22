@@ -24,7 +24,13 @@ const ESCAPED = "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;";
 
 function loadApp(overrides = {}) {
   const document = fakeDocument(overrides);
-  const app = vm.createContext({ document, console, window: { addEventListener() {} } });
+  const app = vm.createContext({
+    document,
+    console,
+    window: { addEventListener() {} },
+    location: { hash: "", origin: "http://localhost:5000", pathname: "/" },
+    URLSearchParams,
+  });
   vm.runInContext(APP_JS, app);
   // As on the organizer's page: it holds every bidder's join token, so it
   // offers each bidder their controls.

@@ -612,6 +612,26 @@ class TestBidderAuthentication(ApiTestCase):
                     self.assert_error(resp, 401)
                     self.assertEqual(resp.headers["WWW-Authenticate"], "Bearer")
 
+    def test_a_join_token_tells_whose_it_is(self):
+        for bidder_id, name in (("bidder_0", "Alice"), ("bidder_2", "Carol")):
+            with self.subTest(bidder_id):
+                resp = self.client.get(self.url("/me"), headers=bearer(self.tokens[bidder_id]))
+                data = self.assert_ok(resp)
+                self.assertEqual((data["bidder_id"], data["name"]), (bidder_id, name))
+
+    def test_only_a_join_token_tells_whose_it_is(self):
+        headers = {
+            "no header": {},
+            "unknown token": bearer("x" * 43),
+            "the organizer token": bearer(self.organizer_token),
+        }
+        for label, header in headers.items():
+            with self.subTest(label):
+                self.assert_error(self.client.get(self.url("/me"), headers=header), 401)
+        self.auction_id = UNKNOWN_ID
+        resp = self.client.get(self.url("/me"), headers=bearer(self.tokens["bidder_0"]))
+        self.assert_error(resp, 404)
+
     def test_the_token_alone_decides_who_is_acting(self):
         # Bob names Alice in the body, as the API once allowed: the server acts
         # for Bob, whose token it is, and Alice's slot stays free.

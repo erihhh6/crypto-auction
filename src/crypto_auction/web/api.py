@@ -8,6 +8,7 @@ reach the server for the first time at the reveal.
 Endpoints (several auctions can run at once, each under its own id):
   POST   /api/auctions             — create an auction (201, Location header)
   GET    /api/auctions/<id>        — fetch its public state
+  GET    /api/auctions/<id>/me     — which bidder a join token belongs to
   POST   /api/auctions/<id>/commit — submit a bid commitment (computed by the bidder)
   POST   /api/auctions/<id>/prove  — submit a ZK range proof for the commitment
   POST   /api/auctions/<id>/reveal — reveal bid + blinding factor, verify commitment
@@ -335,6 +336,21 @@ def get_state(auction_id: str) -> ResponseReturnValue:
     Return the complete public state of an auction.
     """
     return jsonify({"success": True, **_service().public_state(auction_id)})
+
+
+@bp.get("/auctions/<auction_id>/me")
+def get_identity(auction_id: str) -> ResponseReturnValue:
+    """
+    Say which bidder a join token belongs to, so that a page opened from a
+    join link can check the link and greet the bidder before they act.
+
+    Header: Authorization: Bearer <join_token>
+
+    Response:
+      { "success": bool, "bidder_id": str, "name": str }
+    """
+    bidder_id, name = _service().identify(auction_id, _bearer_token())
+    return jsonify({"success": True, "bidder_id": bidder_id, "name": name})
 
 
 # ---------------------------------------------------------------------------

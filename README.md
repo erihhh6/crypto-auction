@@ -17,8 +17,8 @@ auction with applied cryptography: **Commit → ZK Prove → Reveal**.
 > **Work in progress.** This started as a prototype and is being hardened step
 > by step. The cryptographic guarantees below now hold under the
 > honest-but-curious model, but the application around them is not
-> production-ready yet: there are no accounts or rate limits, and one page
-> plays every bidder, among others. See [Limitations](#limitations).
+> production-ready yet: there are no accounts or rate limits, and the
+> organizer's page cannot be reopened, among others. See [Limitations](#limitations).
 
 ---
 
@@ -70,6 +70,13 @@ an organizer token, the only one that can delete the auction. The server
 stores only SHA-256 digests of the tokens. The organizer receives every join
 token to hand out, so tokens protect bidders from each other and from
 outsiders, not from the organizer.
+
+The organizer's page lists a **join link** per bidder, which opens the page as
+that bidder on their own device; every page polls the auction, so each sees
+the others' progress within seconds. The token travels in the link's fragment
+(`#auction=…&token=…`), which browsers never send to the server, so it stays
+out of server logs and `Referer` headers. A page opened from a link first asks
+the server whose token it is (`GET /api/auctions/<id>/me`).
 
 ---
 
@@ -293,8 +300,13 @@ trades size for simplicity.
 - **One request at a time per database**: each holds SQLite's write lock for
   its whole transaction, including verifying a range proof (under 0.1 s).
   Fine for a demo, but it caps throughput under load.
-- **One page plays every bidder**: the page that creates the auction receives
-  every join token; there is no per-bidder view yet.
+- **The organizer's page cannot be reopened**: the organizer token and the
+  join links live in that page only, so after reloading it the organizer can
+  no longer delete the auction or copy the links. (It can play every bidder,
+  as the demo does; bidders can also use their own links.)
+- **Polling, not push**: pages ask for the auction's state every 5 seconds
+  while it runs (and not while hidden); server-sent events would cut the
+  delay and the requests.
 - **No deposits**: a bidder who misses a deadline only loses the chance to
   win. A real deployment would take a deposit that is forfeited along with
   it, so that dropping out has a cost.

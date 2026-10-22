@@ -45,19 +45,28 @@ const failure = (status, error) => ({ status, body: { success: false, error } })
 const UNREACHABLE = Symbol("unreachable");
 
 /**
- * The page, loaded with a created auction (unless `created` is false, as for
- * a page just reloaded). `routes` ("METHOD path" → JSON body, failure(...)
- * or UNREACHABLE) override the stub server's answers and can be changed
- * while a test runs; `document` overrides fake DOM methods.
+ * The page, loaded with a created auction, unless `created` is false (as for
+ * a page just reloaded, or opened from the link in `hash`). `routes`
+ * ("METHOD path" → JSON body, failure(...), UNREACHABLE, or a function
+ * returning one of these) override the stub server's answers and can be
+ * changed while a test runs; `document` overrides fake DOM methods.
  */
-function loadApp({ routes: overrides = {}, document: documentOverrides = {}, created = true } = {}) {
+function loadApp({
+  routes: overrides = {},
+  document: documentOverrides = {},
+  created = true,
+  hash = "",
+  clipboardWorks = true,
+} = {}) {
   const document = fakeDocument(documentOverrides);
   const requests = [];
   const cryptoCalls = [];
   const alerts = [];
   const timers = [];
   const downloads = [];
+  const clipboard = [];
   const windowListeners = {};
+  const location = { hash, origin: "http://localhost:5000", pathname: "/", search: "" };
   const state = {
     success: true,
     auction_id: CREATED.auction_id,
@@ -103,6 +112,21 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {}, cre
       createObjectURL: (blob) => downloads.push(blob) && "blob:download",
       revokeObjectURL() {},
     },
+    URLSearchParams,
+    location,
+    history: {
+      replaceState(_state, _title, url) {
+        location.hash = new URL(url, location.origin).hash;
+      },
+    },
+    navigator: {
+      clipboard: {
+        async writeText(text) {
+          if (!clipboardWorks) throw new Error("NotAllowedError");
+          clipboard.push(text);
+        },
+      },
+    },
     document,
     fetch: async (path, opts) => {
       requests.push({
@@ -111,10 +135,13 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {}, cre
         authorization: opts.headers.Authorization,
         body: opts.body === undefined ? null : JSON.parse(opts.body),
       });
-      const route = routes[`${opts.method} ${path}`];
+      let route = routes[`${opts.method} ${path}`];
+      if (typeof route === "function") route = await route();
       if (route === UNREACHABLE) throw new TypeError("Failed to fetch");
       const { status, body } = route.status ? route : { status: 200, body: route };
-      return { status, json: async () => body };
+      // A fresh copy, as a real response is: the page must not see the
+      // test's later changes to `state` until it asks again.
+      return { status, json: async () => structuredClone(body) };
     },
     window: {
       addEventListener: (type, listener) => (windowListeners[type] = listener),
@@ -162,8 +189,13 @@ function loadApp({ routes: overrides = {}, document: documentOverrides = {}, cre
 
   return {
     app: context, document, requests, cryptoCalls, alerts, timers, state, routes, downloads,
-    commitThroughCard, cardError, toasts, leavingAsks, setupError,
+    clipboard, location, commitThroughCard, cardError, toasts, leavingAsks, setupError,
   };
+}
+
+/** Let the page's pending requests and their follow-ups run. */
+async function settle() {
+  for (let i = 0; i < 20; i++) await setImmediate();
 }
 
 /** A file as the file picker gives it. */
@@ -211,22 +243,130 @@ test("the bid and its blinding factor reach the server only at the reveal", asyn
   assert.deepEqual(sentTo(requests, `${AUCTION}/reveal`), [{ bid: 1500, randomness_hex: BLINDING }]);
 });
 
-test("the page refreshes when the current phase's deadline passes, on the server's clock", async () => {
+test("the page refreshes every few seconds, and just after a deadline", async () => {
   const { app, timers, state } = loadApp();
   // Far from this computer's clock: only the server's times may matter.
   state.state = "committed";
   state.server_time = "2001-01-01T00:00:00.000+00:00";
+
   state.deadlines = { ...state.deadlines, prove: "2001-01-01T00:01:30.000+00:00" };
-
   await app.refreshState();
-  assert.equal(timers.length, 1);
-  assert.equal(timers[0].callback, app.refreshState);
-  assert.equal(timers[0].delay, 90_000 + 250); // just after the deadline
+  assert.equal(timers.at(-1).callback, app.refreshState);
+  assert.equal(timers.at(-1).delay, 5_000, "the next poll comes first");
 
-  // Once finished, there is no deadline left to wait for.
+  state.deadlines = { ...state.deadlines, prove: "2001-01-01T00:00:02.000+00:00" };
+  await app.refreshState();
+  assert.equal(timers.at(-1).delay, 2_000 + 250, "just after the deadline");
+
+  // Once finished, there is nothing left to wait for.
+  const planned = timers.length;
   state.state = "finished";
   await app.refreshState();
-  assert.equal(timers.length, 1);
+  assert.equal(timers.length, planned);
+});
+
+test("a hidden page stops polling, and catches up when shown again", async () => {
+  const { app, document, requests, timers } = loadApp();
+  document.hidden = true;
+  await app.refreshState();
+  assert.deepEqual(timers, []);
+
+  document.hidden = false;
+  const asked = requests.length;
+  for (const listener of document.listeners.visibilitychange) listener();
+  await settle();
+  assert.equal(requests.length, asked + 1);
+  assert.equal(timers.length, 1, "polling again");
+});
+
+test("a slow answer does not overwrite a newer one", async () => {
+  const { app, routes, state, document } = loadApp();
+  let answerOld;
+  routes[`GET ${AUCTION}`] = () => new Promise((resolve) => (answerOld = resolve));
+  const old = app.refreshState(); // a poll, still on its way
+  routes[`GET ${AUCTION}`] = { ...state, state: "committed" };
+  await app.refreshState(); // a newer refresh, answered first
+  answerOld(state); // the poll's answer, now out of date
+  await old;
+  assert.equal(vm.runInContext("localState.serverState.state", app), "committed");
+  assert.ok(document.getElementById("bidder-cards").children.length > 0);
+});
+
+test("whoever's reveal ends the auction, every page shows the winner", async () => {
+  const { app, state, document } = loadApp();
+  state.state = "proved";
+  await app.refreshState();
+  assert.equal(document.getElementById("winner-overlay").style.display, undefined);
+
+  // Bob revealed last, on his own device; this page learns it from a poll.
+  state.state = "finished";
+  state.winner = { bidder_id: "bidder_1", name: "Bob", bid: 1800 };
+  await app.refreshState();
+  assert.equal(document.getElementById("winner-overlay").style.display, "flex");
+  assert.equal(document.getElementById("winner-name").textContent, "Bob");
+});
+
+test("the organizer's page lists each bidder's join link, to copy and send", async () => {
+  const { document, clipboard, toasts } = loadApp();
+  assert.equal(document.getElementById("join-links").hidden, false);
+  for (const { bidder_id } of CREATED.bidders) {
+    const link = new URL(document.getElementById(`join-link-${bidder_id}`).value);
+    assert.equal(link.origin + link.pathname, "http://localhost:5000/");
+    // In the fragment, which is never sent to the server.
+    assert.equal(link.search, "");
+    const params = new URLSearchParams(link.hash.slice(1));
+    assert.equal(params.get("auction"), CREATED.auction_id);
+    assert.equal(params.get("token"), TOKENS[bidder_id]);
+  }
+
+  await document.getElementById("btn-copy-link-bidder_0").click();
+  assert.deepEqual(clipboard, [document.getElementById("join-link-bidder_0").value]);
+  assert.deepEqual(toasts(), ["Alice's join link is copied.✕"]);
+});
+
+test("a join link that cannot be copied is selected for copying by hand", async () => {
+  const { document, toasts } = loadApp({ clipboardWorks: false });
+  await document.getElementById("btn-copy-link-bidder_1").click();
+  const field = document.getElementById("join-link-bidder_1");
+  assert.ok(field.selected);
+  assert.equal(document.activeElement, field);
+  assert.match(toasts()[0], /^Could not copy the link; it is selected/);
+});
+
+test("a join link opens the auction as that bidder, and only that bidder", async () => {
+  const hash = `#${new URLSearchParams({ auction: CREATED.auction_id, token: TOKENS.bidder_0 })}`;
+  const { app, document, requests, setupError, location } = loadApp({
+    created: false,
+    hash,
+    routes: { [`GET ${AUCTION}/me`]: { success: true, bidder_id: "bidder_0", name: "Alice" } },
+  });
+  await settle(); // the page joins as it loads
+
+  assert.equal(setupError(), null);
+  const [me] = requests.filter((r) => r.path === `${AUCTION}/me`);
+  assert.equal(me.authorization, `Bearer ${TOKENS.bidder_0}`, "the link is checked first");
+  assert.equal(document.getElementById("auction-item-label").textContent, "x — bidding as Alice");
+  assert.ok(document.getElementById("bid-input-bidder_0"), "Alice can bid");
+  assert.equal(document.getElementById("bid-input-bidder_1"), null, "for Alice only");
+  assert.equal(document.getElementById("join-links").hidden, true, "no organizer here");
+  assert.equal(document.getElementById("btn-reset").textContent, "Leave");
+
+  // Leaving takes the link out of the address bar, so a reload does not rejoin.
+  await app.resetAuction();
+  assert.equal(location.hash, "");
+  assert.deepEqual(requests.filter((r) => r.method === "DELETE"), []);
+});
+
+test("an invalid join link is explained on the setup page", async () => {
+  const hash = `#${new URLSearchParams({ auction: CREATED.auction_id, token: "not-a-token" })}`;
+  const { document, setupError } = loadApp({
+    created: false,
+    hash,
+    routes: { [`GET ${AUCTION}/me`]: failure(401, "Missing or invalid join token for this auction.") },
+  });
+  await settle();
+  assert.equal(setupError(), "Could not open this join link: it is not valid for this auction.");
+  assert.notEqual(document.getElementById("setup-panel").style.display, "none");
 });
 
 test("each bidder's requests carry that bidder's join token, and no others do", async () => {
