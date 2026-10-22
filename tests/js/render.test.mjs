@@ -216,6 +216,48 @@ test("the phase indicator lights the phase in progress", () => {
   }
 });
 
+test("nothing the script builds would be blocked by the page's CSP", () => {
+  // The server's policy forbids inline handlers (onclick="...") and style
+  // attributes; markup and attributes the script builds must do without too.
+  const { app, document } = loadApp();
+  app.rememberAuction({
+    auction_id: "ab".repeat(16),
+    organizer_token: "organizer", // so the join links are built as well
+    bidders: [{ bidder_id: "bidder_0", name: "Alice", join_token: "a" }],
+  });
+  const committed = { commitment_hex: "02" + "aa".repeat(32), proof_valid: true };
+  for (const state of ["open", "committed", "proved", "finished"]) {
+    const winner = state === "finished" ? { bidder_id: "bidder_0", name: "Alice", bid: 1000 } : null;
+    const bidders = [bidder("bidder_0", "Alice", committed), bidder("bidder_1", "Bob")];
+    app.renderAll(auctionState({ state, winner, bidders }));
+  }
+  app.addBidderInput();
+  app.buildLogEntry("public", "Alice committed", { commitment: "02aa…" });
+
+  // Inside a tag: escaped text such as the item name "&lt;img onerror=…" is harmless.
+  const inline = /<[^>]*\s(?:on[a-z]+|style)\s*=/i;
+  assert.ok(document.markupWritten.length > 0);
+  assert.deepEqual(document.markupWritten.filter((markup) => inline.test(markup)), []);
+  assert.deepEqual(document.attributesSet.filter((name) => /^(?:style|on)/i.test(name)), []);
+});
+
+test("every control of the page is connected by the script", async () => {
+  // With no inline handlers, a control the script forgets would do nothing.
+  const { document } = loadApp();
+  const controls = {
+    click: ["btn-add-bidder", "bidder-inputs", "btn-create", "btn-demo", "btn-stop-demo",
+            "btn-clear-log", "btn-reset", "btn-close-winner"],
+    change: ["receipt-file"],
+  };
+  for (const [type, ids] of Object.entries(controls)) {
+    for (const id of ids) {
+      assert.ok(document.getElementById(id).listeners[type]?.length, `${id} (${type})`);
+    }
+  }
+  await document.getElementById("btn-add-bidder").click();
+  assert.equal(document.getElementById("bidder-inputs").children.length, 1, "a row was added");
+});
+
 test("proof summary reads the range proof format the API returns", () => {
   const { app } = loadApp();
   // Shape of RangeProof.to_dict(): per side, one bit commitment per bit.

@@ -12,8 +12,12 @@ const INDEX_HTML = readFileSync(
   new URL("../../src/crypto_auction/web/templates/index.html", import.meta.url),
   "utf8",
 );
-// Every id in the page, so getElementById finds what the page has, and only that.
-const PAGE_IDS = [...INDEX_HTML.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+// Every element of the page with an id, so getElementById finds what the
+// page has, and only that; hidden as the page starts, if it says so.
+const PAGE_ELEMENTS = [...INDEX_HTML.matchAll(/<[^>]*\sid="([^"]+)"[^>]*>/g)].map((m) => ({
+  id: m[1],
+  hidden: /\shidden[\s/>]/.test(m[0]),
+}));
 
 class FakeClassList {
   constructor(element) {
@@ -78,6 +82,7 @@ export class FakeElement {
     this.ownText = "";
     this.html = String(html);
     this.innerHTMLWrites += 1;
+    this.ownerDocument.markupWritten.push(this.html);
   }
 
   get firstElementChild() {
@@ -131,6 +136,7 @@ export class FakeElement {
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+    this.ownerDocument.attributesSet.push(name);
   }
   getAttribute(name) {
     return this.attributes.get(name) ?? null;
@@ -154,17 +160,25 @@ export class FakeElement {
 
 /**
  * A document with the page's elements; `overrides` replace its methods.
- * `hidden` and `listeners` (by event type) stand for the page's visibility.
+ * `hidden` and `listeners` (by event type) stand for the page's visibility;
+ * `markupWritten` and `attributesSet` record what the script put into it.
  */
 export function fakeDocument(overrides = {}) {
-  const document = { querySelectorAll: () => [], hidden: false, listeners: {} };
+  const document = {
+    querySelectorAll: () => [],
+    hidden: false,
+    listeners: {},
+    markupWritten: [],
+    attributesSet: [],
+  };
   document.addEventListener = (type, listener) => (document.listeners[type] ??= []).push(listener);
   document.createElement = (tag) => new FakeElement(document, tag);
   document.body = document.createElement("body");
   document.activeElement = document.body;
-  for (const id of PAGE_IDS) {
+  for (const { id, hidden } of PAGE_ELEMENTS) {
     const element = document.createElement("div");
     element.id = id;
+    element.hidden = hidden;
     document.body.append(element);
   }
   document.getElementById = (id) => {

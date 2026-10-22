@@ -184,7 +184,7 @@ function loadApp({
   /** The text of the setup panel's error, or null if none is shown. */
   function setupError() {
     const error = document.getElementById("setup-error");
-    return error.style.display === "block" ? error.textContent : null;
+    return error.hidden ? null : error.textContent;
   }
 
   return {
@@ -296,13 +296,13 @@ test("whoever's reveal ends the auction, every page shows the winner", async () 
   const { app, state, document } = loadApp();
   state.state = "proved";
   await app.refreshState();
-  assert.equal(document.getElementById("winner-overlay").style.display, undefined);
+  assert.equal(document.getElementById("winner-overlay").hidden, true);
 
   // Bob revealed last, on his own device; this page learns it from a poll.
   state.state = "finished";
   state.winner = { bidder_id: "bidder_1", name: "Bob", bid: 1800 };
   await app.refreshState();
-  assert.equal(document.getElementById("winner-overlay").style.display, "flex");
+  assert.equal(document.getElementById("winner-overlay").hidden, false);
   assert.equal(document.getElementById("winner-name").textContent, "Bob");
 });
 
@@ -343,6 +343,9 @@ test("a join link opens the auction as that bidder, and only that bidder", async
   await settle(); // the page joins as it loads
 
   assert.equal(setupError(), null);
+  assert.equal(document.getElementById("setup-panel").hidden, true);
+  assert.equal(document.getElementById("auction-view").hidden, false);
+  assert.equal(document.getElementById("phase-indicator").hidden, false);
   const [me] = requests.filter((r) => r.path === `${AUCTION}/me`);
   assert.equal(me.authorization, `Bearer ${TOKENS.bidder_0}`, "the link is checked first");
   assert.equal(document.getElementById("auction-item-label").textContent, "x — bidding as Alice");
@@ -366,7 +369,7 @@ test("an invalid join link is explained on the setup page", async () => {
   });
   await settle();
   assert.equal(setupError(), "Could not open this join link: it is not valid for this auction.");
-  assert.notEqual(document.getElementById("setup-panel").style.display, "none");
+  assert.equal(document.getElementById("setup-panel").hidden, false);
 });
 
 test("each bidder's requests carry that bidder's join token, and no others do", async () => {
@@ -489,7 +492,7 @@ test("reset says when the server could not delete the auction", async () => {
   assert.deepEqual(toasts(), [
     "The auction could not be deleted on the server: Database is locked.✕",
   ]);
-  assert.equal(document.getElementById("setup-panel").style.display, "flex", "reset anyway");
+  assert.equal(document.getElementById("setup-panel").hidden, false, "reset anyway");
 });
 
 test("reset says nothing when the auction was already gone", async () => {
@@ -535,7 +538,7 @@ test("a receipt saved before a reload lets the bidder carry on and reveal", asyn
   await after.app.resumeFromReceipt(fileWith(file.text));
 
   assert.equal(after.setupError(), null);
-  assert.equal(after.document.getElementById("setup-panel").style.display, "none");
+  assert.equal(after.document.getElementById("setup-panel").hidden, true);
   // It acts for Alice only: Bob's card offers nothing.
   assert.equal(after.document.getElementById("btn-reveal-bidder_1"), null);
   await after.document.getElementById("btn-reveal-bidder_0").click();
@@ -561,7 +564,7 @@ test("a receipt for another commitment than the auction's is refused", async () 
     setupError(),
     "Could not continue from this receipt: The auction recorded a different commitment for Alice.",
   );
-  assert.notEqual(document.getElementById("setup-panel").style.display, "none");
+  assert.equal(document.getElementById("setup-panel").hidden, false);
 });
 
 test("files that are not sound receipts are refused before anything is asked", async () => {
@@ -609,7 +612,7 @@ test("the setup buttons work again once a demo has started", async () => {
   app.startDemo(); // runs on until its (never firing) timers; only its start matters here
   for (let i = 0; i < 10; i++) await setImmediate();
 
-  assert.equal(document.getElementById("setup-panel").style.display, "none", "the demo started");
+  assert.equal(document.getElementById("setup-panel").hidden, true, "the demo started");
   for (const id of ["btn-create", "btn-demo"]) {
     assert.equal(document.getElementById(id).disabled, false, `${id} after a reset`);
   }

@@ -78,6 +78,14 @@ the others' progress within seconds. The token travels in the link's fragment
 out of server logs and `Referer` headers. A page opened from a link first asks
 the server whose token it is (`GET /api/auctions/<id>/me`).
 
+**In the browser.** Every response carries a strict Content-Security-Policy:
+scripts, styles and connections from the app's own origin only, no inline code,
+no plugins, no framing. The page is written for it (no inline handlers or
+styles, text inserted as text), so markup injected into it could not run
+script. Responses also send `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`, and API responses,
+which carry tokens and live state, `Cache-Control: no-store`.
+
 ---
 
 ## Protocol
@@ -217,6 +225,7 @@ crypto-auction/
 │   ├── test_auction.py       # State machine, proof binding and winner selection
 │   ├── test_store.py         # SQLite storage: round trips, restarts, concurrent requests
 │   ├── test_api.py           # REST API via Flask's test client
+│   ├── test_web_security.py  # Security headers, CSP, no inline code in the page
 │   ├── test_browser_interop.py  # Server accepts what the browser produces (needs Node)
 │   └── test_app.py           # Server entry point (debug mode)
 ├── pyproject.toml            # Package metadata and tool configuration
@@ -304,6 +313,9 @@ trades size for simplicity.
   join links live in that page only, so after reloading it the organizer can
   no longer delete the auction or copy the links. (It can play every bidder,
   as the demo does; bidders can also use their own links.)
+- **HTTPS is left to the deployment**: the app sends no
+  `Strict-Transport-Security` header, which only means something over HTTPS;
+  set it where TLS ends (a reverse proxy), along with TLS itself.
 - **Polling, not push**: pages ask for the auction's state every 5 seconds
   while it runs (and not while hidden); server-sent events would cut the
   delay and the requests.

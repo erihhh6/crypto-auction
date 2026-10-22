@@ -153,14 +153,16 @@ function showBidderError(bidderId, message) {
 function addBidderInput() {
   const container = document.getElementById("bidder-inputs");
   if (container.children.length >= 10) return;
-  const row = document.createElement("div");
-  row.className = "bidder-input-row";
-  row.innerHTML = `
-    <input type="text" class="bidder-name-input" placeholder="Bidder name" />
-    <button class="btn-remove-bidder" onclick="removeBidderInput(this)">✕</button>
-  `;
-  container.appendChild(row);
-  row.querySelector("input").focus();
+  const input = el("input", "bidder-name-input");
+  input.type = "text";
+  input.placeholder = "Bidder name";
+  // Its clicks are handled by the listener on #bidder-inputs (see wireUp).
+  const remove = el("button", "btn-remove-bidder", "✕");
+  remove.setAttribute("aria-label", "Remove bidder");
+  const row = el("div", "bidder-input-row");
+  row.append(input, remove);
+  container.append(row);
+  input.focus();
 }
 
 function removeBidderInput(btn) {
@@ -178,7 +180,7 @@ function removeBidderInput(btn) {
  * what is wrong. Every step (commit, prove, reveal) gets the same window.
  */
 function readSetupForm() {
-  document.getElementById("setup-error").style.display = "none";
+  document.getElementById("setup-error").hidden = true;
 
   const itemName = document.getElementById("item-name").value.trim();
   const minBid   = parseInt(document.getElementById("min-bid").value, 10);
@@ -235,9 +237,9 @@ async function createAuction() {
 }
 
 function showSetupError(msg) {
-  const el = document.getElementById("setup-error");
-  el.textContent = msg;
-  el.style.display = "block";
+  const error = document.getElementById("setup-error");
+  error.textContent = msg;
+  error.hidden = false;
 }
 
 /**
@@ -259,9 +261,9 @@ function rememberAuction(data) {
 
 /** Leave the setup panel for the auction view. */
 function showAuctionView(itemName) {
-  document.getElementById("setup-panel").style.display = "none";
-  document.getElementById("auction-view").style.display = "grid";
-  document.getElementById("phase-indicator").style.display = "flex";
+  document.getElementById("setup-panel").hidden = true;
+  document.getElementById("auction-view").hidden = false;
+  document.getElementById("phase-indicator").hidden = false;
   document.getElementById("auction-item-label").textContent = itemName;
 }
 
@@ -439,7 +441,7 @@ function parseReceipt(text) {
  */
 async function resumeFromReceipt(file) {
   const input = document.getElementById("receipt-file");
-  document.getElementById("setup-error").style.display = "none";
+  document.getElementById("setup-error").hidden = true;
   try {
     const receipt = parseReceipt(await file.text());
     const state = await apiFetch(`/api/auctions/${encodeURIComponent(receipt.auction_id)}`);
@@ -938,50 +940,41 @@ function renderActionsPanel(state) {
 
   let html = "";
 
-  // Phase description
+  // Phase description. `tone` names the phase's colour (a CSS class, as the
+  // page has no inline styles).
   const phaseDescriptions = {
-    open:      { title: "Phase 1 — Commit", color: "var(--color-commit)",
+    open:      { title: "Phase 1 — Commit", tone: "commit",
       desc: "Each bidder commits to their bid with a Pedersen commitment <code>C = bid·G + r·H</code> on secp256k1, computed in this browser. The auctioneer receives only C, which hides the bid; the bidder cannot change it afterwards." },
-    committed: { title: "Phase 2 — ZK Prove", color: "var(--color-prove)",
+    committed: { title: "Phase 2 — ZK Prove", tone: "prove",
       desc: "Each bidder proves in zero knowledge that the committed bid lies in <strong>[min, max]</strong>: a range proof made of one OR-proof per bit, checked without revealing the bid." },
-    proved:    { title: "Phase 3 — Reveal", color: "var(--color-reveal)",
+    proved:    { title: "Phase 3 — Reveal", tone: "reveal",
       desc: "Each bidder reveals <code>(bid, r)</code>. Anyone can check that <code>bid·G + r·H</code> equals the commitment. Highest verified bid wins; ties go to the earliest commitment." },
-    finished:  { title: "Auction Complete", color: "var(--color-finish)",
+    finished:  { title: "Auction Complete", tone: "finish",
       desc: "The reveal phase is over. The winner has been determined from the verified bids." },
   };
 
   const desc = phaseDescriptions[phase] || phaseDescriptions.open;
 
   html += `
-    <div class="action-section">
-      <div class="action-section-title" style="color:${desc.color}">${desc.title}</div>
+    <div class="action-section tone-${desc.tone}">
+      <div class="action-section-title phase-title">${desc.title}</div>
       <div class="action-info">${desc.desc}</div>
     </div>`;
 
   // Progress
   if (phase !== "finished") {
-    let progressLabel = "", progressPct = 0, progressClass = "";
-    if (phase === "open") {
-      progressLabel = `Committed: ${committed} / ${total}`;
-      progressPct   = total > 0 ? (committed / total) * 100 : 0;
-      progressClass = "progress-commit";
-    } else if (phase === "committed") {
-      progressLabel = `ZK Proved: ${proved} / ${total}`;
-      progressPct   = total > 0 ? (proved / total) * 100 : 0;
-      progressClass = "progress-prove";
-    } else if (phase === "proved") {
-      progressLabel = `Revealed: ${revealed} / ${total}`;
-      progressPct   = total > 0 ? (revealed / total) * 100 : 0;
-      progressClass = "progress-reveal";
-    }
+    const [label, done] = {
+      open:      [`Committed: ${committed} / ${total}`, committed],
+      committed: [`ZK Proved: ${proved} / ${total}`, proved],
+      proved:    [`Revealed: ${revealed} / ${total}`, revealed],
+    }[phase];
 
     html += `
-      <div class="action-section ${progressClass}">
+      <div class="action-section tone-${desc.tone}">
         <div class="action-section-title">Progress</div>
-        <div class="action-info">${progressLabel}</div>
-        <div class="progress-bar">
-          <div class="progress-bar-fill" style="width:${progressPct.toFixed(0)}%"></div>
-        </div>
+        <div class="action-info">${label}</div>
+        <progress class="progress" max="${Math.max(total, 1)}" value="${done}"
+                  aria-label="${label}"></progress>
       </div>`;
 
     const closes = new Date(currentDeadline(state)).toLocaleTimeString("en-GB");
@@ -1010,12 +1003,12 @@ function renderActionsPanel(state) {
   // Winner summary
   if (state.winner) {
     html += `
-      <div class="action-section" style="border-color:var(--gold)">
-        <div class="action-section-title" style="color:var(--gold)">🏆 Winner</div>
+      <div class="action-section winner-section">
+        <div class="action-section-title">🏆 Winner</div>
         <div class="action-info">
           <strong>${escapeHtml(state.winner.name)}</strong><br/>
-          Winning bid: <strong style="color:var(--green)">${fmtBid(state.winner.bid)}</strong><br/>
-          <span style="font-size:10px;color:var(--text-dim)">Commitment verified ✓</span>
+          Winning bid: <strong class="winning-bid">${fmtBid(state.winner.bid)}</strong><br/>
+          <span class="fine-print">Commitment verified ✓</span>
         </div>
       </div>`;
   } else if (phase === "finished") {
@@ -1077,11 +1070,11 @@ function clearLog() {
 function showWinnerModal(winner) {
   document.getElementById("winner-name").textContent = winner.name;
   document.getElementById("winner-bid").textContent  = fmtBid(winner.bid);
-  document.getElementById("winner-overlay").style.display = "flex";
+  document.getElementById("winner-overlay").hidden = false;
 }
 
 function closeWinnerModal() {
-  document.getElementById("winner-overlay").style.display = "none";
+  document.getElementById("winner-overlay").hidden = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1117,11 +1110,11 @@ async function resetAuction() {
   localState.bidderSecrets = {};
 
   // Reset UI
-  document.getElementById("auction-view").style.display = "none";
-  document.getElementById("phase-indicator").style.display = "none";
-  document.getElementById("setup-panel").style.display = "flex";
-  document.getElementById("setup-error").style.display = "none";
-  document.getElementById("winner-overlay").style.display = "none";
+  document.getElementById("auction-view").hidden = true;
+  document.getElementById("phase-indicator").hidden = true;
+  document.getElementById("setup-panel").hidden = false;
+  document.getElementById("setup-error").hidden = true;
+  document.getElementById("winner-overlay").hidden = true;
   clearLog();
 }
 
@@ -1206,7 +1199,7 @@ async function startDemo() {
 
   rememberAuction(auctionData);
   showAuctionView(auctionData.item_name);
-  document.getElementById("demo-banner").style.display = "flex";
+  document.getElementById("demo-banner").hidden = false;
 
   await refreshState();
   addPublicLogEntry("Auction created (Demo mode)", {
@@ -1298,13 +1291,13 @@ async function startDemo() {
   } finally {
     demo.running = false;
     demo.aborted = false;
-    document.getElementById("demo-banner").style.display = "none";
+    document.getElementById("demo-banner").hidden = true;
   }
 }
 
 function stopDemo() {
   demo.aborted = true;
-  document.getElementById("demo-banner").style.display = "none";
+  document.getElementById("demo-banner").hidden = true;
   addPublicLogEntry("Demo stopped by user", {});
 }
 
@@ -1313,3 +1306,30 @@ function getBidderNameFromData(auctionData, bidderId) {
   const b = auctionData.bidders.find(x => x.bidder_id === bidderId);
   return b ? b.name : bidderId;
 }
+
+// ---------------------------------------------------------------------------
+// Wiring. The page has no inline handlers (onclick="..."), which the server's
+// Content-Security-Policy forbids: its controls are connected here, once.
+// ---------------------------------------------------------------------------
+
+function wireUp() {
+  const on = (id, type, handler) => document.getElementById(id).addEventListener(type, handler);
+  on("btn-add-bidder", "click", addBidderInput);
+  // One listener for every remove button, including those of rows added later.
+  on("bidder-inputs", "click", (event) => {
+    const button = event.target.closest(".btn-remove-bidder");
+    if (button) removeBidderInput(button);
+  });
+  on("btn-create", "click", createAuction);
+  on("btn-demo", "click", startDemo);
+  on("receipt-file", "change", (event) => {
+    const [file] = event.target.files;
+    if (file) resumeFromReceipt(file);
+  });
+  on("btn-stop-demo", "click", stopDemo);
+  on("btn-clear-log", "click", clearLog);
+  on("btn-reset", "click", resetAuction);
+  on("btn-close-winner", "click", closeWinnerModal);
+}
+
+wireUp();
